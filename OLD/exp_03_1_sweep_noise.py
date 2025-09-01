@@ -1,7 +1,7 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Experiment 03.1 â€” Sweep dell'intensitÃ  del rumore su J locali (DP-like)
+Experiment 03.1 — Sweep dell'intensità del rumore su J locali (DP-like)
 ======================================================================
 Obiettivo: mostrare come variano le metriche **finali** (ultimo round) al variare della scala di
 rumore iniettato direttamente nelle J locali dei client.
@@ -10,13 +10,13 @@ Sigle (espansione alla prima occorrenza):
 - FL = Federated Learning (apprendimento federato)
 - TAM = Tripartite Associative Memory
 - SNR = Signal-to-Noise Ratio (rapporto segnale/rumore)
-- "shuffle" = stima di K_eff tramite baseline a permutazione (non Marchenkoâ€“Pastur)
+- "shuffle" = stima di K_eff tramite baseline a permutazione (non Marchenko–Pastur)
 
 Output:
 - hyperparams.json
 - log.jsonl (una riga per seed e per valore di rumore)
 - results_table.csv (tabella comoda)
-- fig_summary.png (grafico Seaborn 2Ã—2 con bande SE)
+- fig_summary.png (grafico Seaborn 2×2 con bande SE)
 
 Note implementative richieste:
 - uso estensivo di tqdm
@@ -35,7 +35,7 @@ import math
 import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import List, Tuple, Literal, cast
+from typing import List, Tuple
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -47,19 +47,17 @@ from tqdm.auto import tqdm
 # ---------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parents[1]  # progetto UNSUP
 if str(ROOT) not in sys.path:
-    pass
-SRC = ROOT / 'src'
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
-from src.unsup.functions import (
+    sys.path.insert(0, str(ROOT))
+
+from Functions import (
     gen_patterns,
     JK_real,
     unsupervised_J,
     propagate_J,
     estimate_K_eff_from_J,
 )
-from src.unsup.networks import TAM_Network
-from src.unsup.dynamics import dis_check
+from Networks import TAM_Network
+from Dynamics import dis_check
 
 # ---------------------------------------------------------------------
 # Dataclass iperparametri
@@ -113,7 +111,7 @@ def safe_propagate(J: np.ndarray, *, iters: int = 1, max_steps: int = 300, clip:
     if not np.all(np.isfinite(J)):
         J = np.nan_to_num(J, nan=0.0, posinf=0.0, neginf=0.0)
     J = np.clip(J, -clip, clip)
-    # Se raggio spettrale troppo grande, normalizza per stabilitÃ 
+    # Se raggio spettrale troppo grande, normalizza per stabilità
     try:
         vals = np.linalg.eigvalsh(0.5 * (J + J.T))
         rho = np.max(np.abs(vals)) if vals.size else 0.0
@@ -134,7 +132,7 @@ def safe_propagate(J: np.ndarray, *, iters: int = 1, max_steps: int = 300, clip:
     return JKS
 
 # ---------------------------------------------------------------------
-# Dataset unsupervised (IID su Î¼)
+# Dataset unsupervised (IID su μ)
 # ---------------------------------------------------------------------
 
 def gen_dataset_unsup(xi_true: np.ndarray, M_total: int, r_ex: float, n_batch: int, L: int,
@@ -310,7 +308,7 @@ def aggregate_and_plot(hp: HyperParams, rows: List[dict], out_dir: Path) -> None
 
     _allowed_styles = {"white", "dark", "whitegrid", "darkgrid", "ticks"}
     style_use = hp.style if hp.style in _allowed_styles else "whitegrid"
-    sns.set_theme(style=cast(Literal["white", "dark", "whitegrid", "darkgrid", "ticks"], style_use), palette=hp.palette)
+    sns.set_theme(style=style_use, palette=hp.palette)
     fig, axes = plt.subplots(2, 2, figsize=(11, 9), constrained_layout=True)
 
     # 1) Retrieval finale vs rumore
@@ -329,7 +327,7 @@ def aggregate_and_plot(hp: HyperParams, rows: List[dict], out_dir: Path) -> None
     sns.pointplot(data=df_f, x="noise_std0", y="fro", hue="kind", errorbar=("se", 1), dodge=True, ax=ax)
     ax.set_title("Frobenius finale: pre vs post-propagation")
     ax.set_xlabel("noise_std0")
-    ax.set_ylabel("||Jâˆ’J*||_F / ||J*||_F")
+    ax.set_ylabel("||J−J*||_F / ||J*||_F")
     ax.grid(True, alpha=0.3)
     ax.legend(title="")
 
@@ -343,7 +341,7 @@ def aggregate_and_plot(hp: HyperParams, rows: List[dict], out_dir: Path) -> None
     ax.legend(loc="best")
     ax.grid(True, alpha=0.3)
 
-    # 4) StabilitÃ  spettrale (SNR e raggio) â€” mostro SNR
+    # 4) Stabilità spettrale (SNR e raggio) — mostro SNR
     ax = axes[1, 1]
     sns.pointplot(data=df, x="noise_std0", y="snr_final", errorbar=("se", 1), dodge=True, ax=ax)
     ax.set_title("SNR spettrale finale vs rumore")
@@ -429,4 +427,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

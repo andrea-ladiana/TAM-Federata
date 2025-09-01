@@ -36,7 +36,7 @@ import math
 import time
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, cast, Literal
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -52,15 +52,15 @@ if str(ROOT) not in sys.path:
 SRC = ROOT / 'src'
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
-from unsup.functions import (
+from src.unsup.functions import (
     gen_patterns,
     JK_real,
     unsupervised_J,
     propagate_J,
     estimate_K_eff_from_J,
 )
-from unsup.networks import TAM_Network
-from unsup.dynamics import dis_check
+from src.unsup.networks import TAM_Network
+from src.unsup.dynamics import dis_check
 
 # ---------------------------------------------------------------------
 # Dataclass iperparametri
@@ -106,7 +106,7 @@ class HyperParams:
 # Propagazione robusta (evita NaN/Inf)
 # ---------------------------------------------------------------------
 def safe_propagate(J: np.ndarray, *, iters: int = 1, max_steps: int = 300, clip: float = 1e3) -> np.ndarray:
-    from unsup.functions import propagate_J  # import locale per evitare cicli
+    from src.unsup.functions import propagate_J  # import locale per evitare cicli
     if not np.all(np.isfinite(J)):
         J = np.nan_to_num(J, nan=0.0, posinf=0.0, neginf=0.0)
     J = np.clip(J, -clip, clip)
@@ -271,7 +271,7 @@ def run_one_seed_one_bits(hp: HyperParams, seed: int, bits: int) -> dict:
         Net = TAM_Network()
         Net.prepare(J_rec_ext, hp.L)
         xi_r, magn = dis_check(autov, hp.K, hp.L, J_rec_ext, JKS_ext,
-                               Î¾=xi_true, updates=hp.updates, show_bar=False)
+                               ξ=xi_true, updates=hp.updates, show_bar=False)
         xi_ref = xi_r
 
     # Metriche finali @ ultimo round
@@ -319,7 +319,7 @@ def aggregate_and_plot(hp: HyperParams, rows: List[dict], out_dir: Path) -> None
 
     _allowed_styles = {"white", "dark", "whitegrid", "darkgrid", "ticks"}
     style_use = hp.style if hp.style in _allowed_styles else "whitegrid"
-    sns.set_theme(style=style_use, palette=hp.palette)
+    sns.set_theme(style=cast(Literal['white', 'dark', 'whitegrid', 'darkgrid', 'ticks'], style_use), palette=hp.palette)
     fig, axes = plt.subplots(2, 3, figsize=(14, 9), constrained_layout=True)
 
     # 1) Retrieval finale vs bitwidth

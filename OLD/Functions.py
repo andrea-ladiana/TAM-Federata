@@ -1,0 +1,332 @@
+import numpy as np
+from tqdm import tqdm
+
+# Lightweight NumPy backend to avoid TensorFlow/PyTorch usage
+class _NPBackend:
+    # Provide dtypes for compatibility
+    float32 = np.float32
+
+    @staticmethod
+    def einsum(subscripts, *operands, **kwargs):
+        return np.einsum(subscripts, *operands, **kwargs)
+
+    @staticmethod
+    def sign(x):
+        # Map zeros to +1 to stay consistent with binary {+1,-1}
+        x = np.sign(x)
+        return np.where(x >= 0, 1, -1)
+
+    @staticmethod
+    def convert_to_tensor(x, dtype=None):
+        return np.array(x, dtype=dtype if dtype is not None else None)
+
+    @staticmethod
+    def transpose(x, perm=None):
+        return np.transpose(x, axes=perm)
+
+    @staticmethod
+    def expand_dims(a, axis):
+        return np.expand_dims(a, axis=axis)
+
+    @staticmethod
+    def reshape(a, shape):
+        return np.reshape(a, shape)
+
+tf = _NPBackend()
+
+
+########################################################
+################### HOPFIELD ###########################
+########################################################
+
+
+def gen_patterns(N,P):
+    ξ = 2*np.random.randint(0,2,(P,N))-1
+    return tf.convert_to_tensor(ξ, dtype=np.float32)
+
+def gen_archetypes(ξ, M, r):
+    η = []
+    P = np.shape(ξ)[0]; N = np.shape(ξ)[1]
+    for μ in range(P):
+        probs = np.random.uniform(size=(M,N))
+        χ = np.sign(0.5*(1+r)-probs)
+        ημ = np.array(tf.einsum('ai,i->ai', χ, ξ[μ]))
+        ημ = np.mean(ημ, axis=0)
+        η.append(ημ)
+    η = tf.convert_to_tensor(η, dtype=np.float32)
+    return η
+
+def Hebb_J(η):
+    N = np.shape(η)[1]
+    return tf.einsum('ai,aj->ij', η, η)/N
+
+
+########################################################
+################# PSEUDO INV ###########################
+########################################################
+
+def propagate_J(J, J_real=-1, verbose=True, stop_t=0, iters=20, max_steps: int | None = None):
+    """Iterative propagation (pseudo-inverse like refinement).
+
+    Parameters
+    ----------
+    J : array
+        Initial matrix.
+    J_real : array or -1
+        If provided (not -1) used only for optional progress norm logging.
+    verbose : bool
+        Show tqdm progress.
+    stop_t : float (legacy)
+        If >0 overrides iters: number of micro steps = stop_t/eps.
+    iters : int (legacy semantics)
+        Logical iterations converted to micro steps via division by eps.
+    max_steps : int | None
+        Hard cap on number of micro steps (after translation) to allow quick approximate propagation.
+    """
+    eps = 0.001
+    if stop_t > 0:
+        nupdates = int(stop_t / eps)
+    else:
+        nupdates = int(iters / eps)
+    if max_steps is not None:
+        nupdates = min(nupdates, max_steps)
+    Jf = np.copy(J)
+    disable = not verbose
+    for l in tqdm(range(0, nupdates + 1), disable=disable):
+        Jf += eps / (1 + eps * l) * (Jf - tf.einsum('ik,kj->ij', Jf, Jf))
+        if np.mean(J_real) != -1 and l % 1000 == 0:
+            print(np.linalg.norm(J_real - Jf, ord='fro'))
+    return Jf
+
+
+def dreaming_t(ξ, t):
+    N = ξ.shape[1]
+    C = tf.einsum('ki,pi->kp', ξ, ξ)/N
+    kernel = (1 + t * C)/(1+t)
+    C_inv = np.linalg.inv(kernel)
+    J = tf.einsum('ki,kp,pj->ij', ξ, C_inv, ξ)/N
+    return J
+
+def dreaming_t_unsup(ξ, t, M):
+    N = ξ.shape[1]
+    C = tf.einsum('ki,pi->kp', ξ, ξ)/(M*N)
+    kernel = (1 + t * C)
+    C_inv = np.linalg.inv(kernel)
+    J = tf.einsum('ki,kp,pj->ij', ξ, C_inv*(1+t), ξ)/(M*N)
+    return J
+
+
+def JK_real(ξ):
+    N = ξ.shape[1]
+    C = tf.einsum('ki,pi->kp', ξ, ξ)/N
+    C_inv = np.linalg.inv(C)
+    J = tf.einsum('ki,kp,pj->ij', ξ, C_inv, ξ)/N
+    return J
+
+
+
+########################################################
+################# EXAMPLES #############################
+########################################################
+def gen_dataset_unsup(ξ, M, r, n_split, L, legacy: bool = False):
+    """Generate an unsupervised (no labels) dataset split across L clients and n_split rounds.
+
+    Parameters
+    ----------
+    ξ : array (K, N)
+        True archetypes/patterns.
+    M : int
+        TOTAL number of examples you want (across all clients and all rounds) if legacy=False.
+        (Legacy behaviour: interpreted roughly as examples per round, NOT divided by L or K.)
+    r : float in [0,1]
+        Average quality / correlation parameter.
+    n_split : int
+        Number of rounds (batches) per client.
+    L : int
+        Number of clients.
+    legacy : bool (default False)
+        If True, keep the original (inflated) allocation used previously.
+
+    Returns
+    -------
+    η : tensor (L, n_split, M_per_client_round, N)
+        For each client l and round m we provide a set of examples with shape (M_per_client_round, N).
+
+    Notes
+    -----
+    New (default) semantics aim so that the *total* number of examples over all clients and rounds
+    is close to M (can be slightly >= due to ceil). Old code allocated ~K times more per client/round.
+    Set legacy=True to reproduce previous behaviour for comparison.
+    """
+    η = []
+    P = np.shape(ξ)[0]; N = np.shape(ξ)[1]
+
+    if legacy:
+        # Original (inflated) behaviour: each client & round gets (M//n_split)*P examples
+        num_per_example = int(M // n_split)
+    else:
+        # Target: total examples ≈ M = L * n_split * (num_per_example * P)
+        # => num_per_example ≈ M / (L * n_split * P)
+        num_per_example = int(np.ceil(M / (L * n_split * P)))
+        if num_per_example < 1:
+            num_per_example = 1
+
+    for μ in range(P):
+        probs = np.random.uniform(size=(L, n_split, num_per_example, N))
+        χ = np.sign(0.5*(1+r)-probs)
+        ημ = np.array(tf.einsum('akmi,i->mkai', χ, ξ[μ]))  # (num_per_example, n_split, L, N)
+        η.append(ημ)
+
+    η = np.reshape(np.array(η), (num_per_example * P, n_split, L, N))  # (num_per_example*P, n_split, L, N)
+    # Reorder to (L, n_split, num_per_example*P, N) (same layout as before so downstream code still works)
+    η = np.einsum('lmAi,Amli->lmAi', np.ones((L, n_split, num_per_example * P, N)), η)
+    η = tf.convert_to_tensor(η, dtype=np.float32)
+
+    if not legacy:
+        # Lightweight sanity info (can be commented out if too verbose)
+        total_alloc = L * n_split * num_per_example * P
+        if total_alloc != M:
+            # Silent mismatch is okay; just informative.
+            pass  # (leave a placeholder, no print to avoid notebook clutter)
+    return η
+
+def gen_dataset_sup_split(ξ, M, r, n_split, L):
+    P = np.shape(ξ)[0]; N = np.shape(ξ)[1]
+    num_per_example = int(M//n_split)
+    probs = np.random.uniform(size=(L, n_split, num_per_example, N, P))
+    χ = np.sign(0.5*(1+r)-probs)
+    η = np.array(tf.einsum('akmiK,Ki->akmKi', χ, ξ))
+    η = tf.convert_to_tensor(η, dtype=np.float32)
+    return η
+
+
+def unsupervised_J(η, M):
+    N = np.shape(η)[1]
+    return tf.einsum('ai,aj->ij', η, η)/(N*M)
+
+def supervised_J(η):
+    η = tf.convert_to_tensor(η, dtype=np.float32)
+    M, K, N = np.shape(η)
+    ξ = np.sign(np.sum(η, axis=0))
+    return tf.einsum('ki,kj->ij', ξ, ξ)/N
+
+
+def JK_real_sup(ξ):
+    N = ξ.shape[1]
+    C = (tf.einsum('ki,pi->kp', ξ, ξ)/N + tf.einsum('ki,pi->pk', ξ, ξ)/N)/2
+    C_inv = np.linalg.inv(C)
+    J = tf.einsum('ki,kp,pj->ij', ξ, C_inv, ξ)/N
+    return J
+
+
+def JK_real_unsup(η, M):
+    N = η.shape[1]
+    C = tf.einsum('ki,pi->kp', η, η)/(M*N)
+    C_inv = np.linalg.inv(C)
+    J = tf.einsum('ki,kp,pj->ij', η, C_inv, η)/(N*M)
+    return J
+########################################################
+########################################################
+
+
+########################################################
+# K_eff ESTIMATION UTILITIES (MP / SHUFFLE THRESHOLDS)
+########################################################
+def estimate_K_eff_from_J(J, method="mp", alpha=0.01, n_random=32, M_eff=None, data_var=None):
+    """Estimate effective rank (K_eff) of a symmetric connectivity / covariance-like matrix.
+
+    Parameters
+    ----------
+    J : (N, N) array
+        Symmetric matrix (e.g. propagated JKS).
+    method : {'shuffle','mp'}
+        'shuffle'  -> build null distribution from random symmetric matrices using sampled off-diagonal entries.
+        'mp'       -> use Marchenko-Pastur upper edge (requires M_eff, the effective sample size used to build J or underlying covariance before projection).
+    alpha : float
+        Significance level for threshold (1-alpha quantile for shuffle; ignored for MP except via edge detection).
+    n_random : int
+        Number of random matrices for shuffle null model.
+    M_eff : int or None
+        Effective number of samples (needed for MP). If None and method='mp', a ValueError is raised.
+    data_var : float or None
+        Optional variance estimate of noise. If None, estimated from lower 50% eigenvalues.
+
+    Returns
+    -------
+    K_eff : int
+        Estimated number of informative components.
+    keep_mask : boolean array
+        Mask over eigenvalues (descending) marking retained ones.
+    info : dict
+        Auxiliary diagnostic values (eigenvalues, threshold, method specifics).
+
+    Notes
+    -----
+    - For 'shuffle' we preserve the empirical distribution of off-diagonal entries but destroy structure; diagonal is kept.
+    - For 'mp' we assume a whitened Wishart-like bulk: λ_max^MP = σ^2 (1 + sqrt(q))^2 with q = N / M_eff.
+    """
+    J = np.asarray(J)
+    # Eigen-decomposition (ensure real part if small imaginary numerical noise)
+    evals, evecs = np.linalg.eig(J)
+    evals = np.real(evals)
+    # Sort descending for convenience
+    order = np.argsort(evals)[::-1]
+    evals_sorted = evals[order]
+
+    if method == 'shuffle':
+        N = J.shape[0]
+        # Collect off-diagonal entries
+        off = J[np.triu_indices(N, k=1)]
+        diag = np.diag(J)
+        rand_max = []
+        for _ in range(n_random):
+            # Sample without replacement if enough entries else with replacement
+            if len(off) >= (N*(N-1))//2:
+                sampled = np.random.choice(off, size=(N*(N-1))//2, replace=True)
+            else:
+                sampled = np.random.choice(off, size=(N*(N-1))//2, replace=True)
+            R = np.zeros_like(J)
+            iu = np.triu_indices(N, k=1)
+            R[iu] = sampled
+            R = R + R.T
+            np.fill_diagonal(R, diag)  # keep marginal scales similar
+            revals = np.linalg.eigvalsh(R)
+            rand_max.append(np.max(revals))
+        threshold = np.quantile(rand_max, 1 - alpha)
+        keep_mask = evals_sorted > threshold
+        K_eff = int(np.sum(keep_mask))
+        info = {
+            'threshold': threshold,
+            'rand_max': rand_max,
+            'eigenvalues': evals_sorted,
+            'method': 'shuffle'
+        }
+        return K_eff, keep_mask, info
+
+    elif method == 'mp':
+        if M_eff is None:
+            raise ValueError("M_eff (effective sample size) must be provided for MP method.")
+        N = J.shape[0]
+        q = N / float(M_eff)
+        # Estimate noise variance from lower half eigenvalues if not provided
+        if data_var is None:
+            lower_half = evals_sorted[len(evals_sorted)//2:]
+            data_var = np.median(lower_half)
+        lambda_plus = data_var * (1 + np.sqrt(q))**2
+        keep_mask = evals_sorted > lambda_plus
+        K_eff = int(np.sum(keep_mask))
+        info = {
+            'lambda_plus': lambda_plus,
+            'q': q,
+            'data_var': data_var,
+            'eigenvalues': evals_sorted,
+            'method': 'mp'
+        }
+        return K_eff, keep_mask, info
+    else:
+        raise ValueError("method must be 'shuffle' or 'mp'")
+
+
+
+
+

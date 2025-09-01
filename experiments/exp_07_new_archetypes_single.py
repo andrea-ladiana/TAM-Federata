@@ -21,7 +21,7 @@ import json
 import math
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import List, Tuple, Dict, Literal
+from typing import List, Tuple, Dict, Literal, Any
 
 import numpy as np
 import pandas as pd
@@ -35,15 +35,15 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / 'src'
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
-from unsup.functions import (
+from src.unsup.functions import (
     gen_patterns,
     JK_real,
     unsupervised_J,
     propagate_J,
     estimate_K_eff_from_J,
 )
-from unsup.networks import TAM_Network
-from unsup.dynamics import dis_check
+from src.unsup.networks import TAM_Network
+from src.unsup.dynamics import dis_check
 
 
 @dataclass
@@ -174,7 +174,7 @@ def run_one_seed_strategy(hp: HyperParams, seed: int, strategy: Literal["baselin
         vals, vecs = np.linalg.eig(JKS_iter)
         mask = (np.real(vals) > 0.5)
         autov = np.real(vecs[:, mask]).T
-        xi_hat, Magn = dis_check(autov, hp.K, hp.L, J_rec, JKS_iter, xi=xi_true, updates=hp.updates, show_bar=False)
+        xi_hat, Magn = dis_check(autov, hp.K, hp.L, J_rec, JKS_iter, ξ=xi_true, updates=hp.updates, show_bar=False)
         xi_ref = xi_hat
 
         # Gap spettrale (semplice): Î»_max - Î»_next
@@ -213,8 +213,9 @@ def run_one_seed_strategy(hp: HyperParams, seed: int, strategy: Literal["baselin
 def run_and_plot(hp: HyperParams, exp_dir: Path) -> None:
     rows: List[Dict[str, Any]] = []
     log_path = exp_dir / "log.jsonl"
+    strategies: List[Literal["baseline", "ema_adapt"]] = ["baseline", "ema_adapt"]
     with open(log_path, "w") as flog:
-        for strategy in ["baseline", "ema_adapt"]:
+        for strategy in strategies:
             for i in range(hp.n_seeds):
                 seed = hp.seed_base + i
                 out = run_one_seed_strategy(hp, seed, strategy, exp_dir)

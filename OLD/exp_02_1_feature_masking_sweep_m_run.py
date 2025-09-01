@@ -1,16 +1,16 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Experiment 02.1 â€” Sweep di m (feature masking) con m uguale per tutti i client
+Experiment 02.1 — Sweep di m (feature masking) con m uguale per tutti i client
 ==============================================================================
 Scenario: ogni client osserva la stessa frazione m di feature (neuroni), ma le maschere sono
 campionate indipendentemente tra client (stessa copertura attesa, insiemi diversi). Si scandisce m
 in [m_min, m_max] e si misura l'effetto sui risultati finali.
 
-Metriche finali (per ciascun m, aggregate su piÃ¹ seed):
+Metriche finali (per ciascun m, aggregate su più seed):
 - m_final: overlap medio di Mattis (con matching Hungarian) tra archetipi ricostruiti e veri
 - fro_final: Frobenius relativa ||J - J*||_F / ||J*||_F
-- K_eff_final (MP): stima del rank efficace via Marchenkoâ€“Pastur
+- K_eff_final (MP): stima del rank efficace via Marchenko–Pastur
 - SNR_spettrale_finale
 - pair_coverage: frazione di coppie (i,j) coperte da almeno un client (proxy)
 
@@ -21,7 +21,7 @@ Output per configurazione:
 
 Dipendenze: numpy, matplotlib, seaborn, scipy, + i tuoi file Functions.py, Networks.py, Dynamics.py.
 Acronimi espansi alla prima occorrenza: FL = Federated Learning (apprendimento federato),
-TAM = Tripartite Associative Memory, MP = Marchenkoâ€“Pastur, SNR = Signal-to-Noise Ratio (rapporto segnale/rumore).
+TAM = Tripartite Associative Memory, MP = Marchenko–Pastur, SNR = Signal-to-Noise Ratio (rapporto segnale/rumore).
 """
 from __future__ import annotations
 import os
@@ -40,7 +40,7 @@ import seaborn as sns
 # ---------------------------------------------------------------------
 # tqdm (opzionale) per barre di avanzamento
 # ---------------------------------------------------------------------
-try:  # uso auto per compatibilitÃ  notebook/console
+try:  # uso auto per compatibilità notebook/console
     from tqdm.auto import trange, tqdm  # type: ignore
     _TQDM_AVAILABLE = True
 except Exception:  # pragma: no cover
@@ -57,7 +57,7 @@ except Exception:  # pragma: no cover
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")  # 3=ERROR only
 # Disabilita ottimizzazioni oneDNN per eliminare l'avviso opzionale
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
-try:  # import lazy: se TF non Ã¨ installato non fallisce
+try:  # import lazy: se TF non è installato non fallisce
     import tensorflow as tf  # type: ignore
     try:
         tf.get_logger().setLevel('ERROR')
@@ -79,19 +79,17 @@ except Exception:
 # ---------------------------------------------------------------------
 # Root progetto (cartella UNSUP) = parent della cartella 'stress_tests'
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
-SRC = ROOT / 'src'
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
-from src.unsup.functions import (
+from Functions import (
     gen_patterns,
     JK_real,
     unsupervised_J,
     propagate_J,
     estimate_K_eff_from_J,
 )
-from src.unsup.networks import TAM_Network
-from src.unsup.dynamics import dis_check
+from Networks import TAM_Network
+from Dynamics import dis_check
 
 # ---------------------------------------------------------------------
 # Dataclass iperparametri
@@ -134,7 +132,7 @@ class HyperParams:
     use_tqdm_updates: bool = True # riusa la stessa barra interna di dis_check se disponibile
 
 # ---------------------------------------------------------------------
-# UtilitÃ  per dataset e aggregazione
+# Utilità per dataset e aggregazione
 # ---------------------------------------------------------------------
 
 def make_feature_masks_equal_fraction(L: int, N: int, m: float, rng: np.random.Generator) -> np.ndarray:
@@ -156,7 +154,7 @@ def gen_dataset_feature_masking(
     masks: np.ndarray,
     rng: np.random.Generator,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Genera ETA con feature masking: E[l,b,Â·,i]=0 se mask[l,i]=False.
+    """Genera ETA con feature masking: E[l,b,·,i]=0 se mask[l,i]=False.
     Ritorna ETA: (L, n_batch, M_c, N) e labels (indici archetipi usati) per analisi a valle.
     """
     K, N = xi_true.shape
@@ -192,7 +190,7 @@ def _client_J_with_mask(E_l: np.ndarray, mask_l: np.ndarray, K: int) -> Tuple[np
 
 
 def aggregate_clients_J(E: np.ndarray, masks: np.ndarray, K: int) -> Tuple[np.ndarray, float]:
-    """Media pairwise pesata su (i,j): J = (âˆ‘_l J_l) / (âˆ‘_l W_l), con W_l=mask_lâŠ—mask_l.
+    """Media pairwise pesata su (i,j): J = (∑_l J_l) / (∑_l W_l), con W_l=mask_l⊗mask_l.
     Ritorna J e pair_coverage = frazione di coppie osservate da almeno un client.
     """
     L, M_eff, N = E.shape
@@ -318,7 +316,7 @@ def aggregate_and_plot(hp: HyperParams, rows: List[dict], out_dir: Path) -> None
     sns.pointplot(data=df, x="m", y="fro_final", errorbar=("se", 1), dodge=True, ax=ax)  # type: ignore[arg-type]
     ax.set_title("Frobenius relativa finale vs m")
     ax.set_xlabel("m")
-    ax.set_ylabel("||Jâˆ’J*||_F / ||J*||_F")
+    ax.set_ylabel("||J−J*||_F / ||J*||_F")
     ax.grid(True, alpha=0.3)
 
     # 3) K_eff finale (MP) vs m

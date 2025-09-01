@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / 'src'
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
-from unsup.dynamics_single_mode import (
+from src.unsup.dynamics_single_mode import (
     grid_search_w_single,
     refine_grid_search_single,
 )

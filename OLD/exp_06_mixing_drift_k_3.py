@@ -1,13 +1,13 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-r"""
-Experiment 06 (fix) â€” Drift dei pesi di mixing (K=3) con grafico sul simplesso
+"""
+Experiment 06 (fix) — Drift dei pesi di mixing (K=3) con grafico sul simplesso
 ==============================================================================
 Correzione e riscrittura robusta dell'esperimento K=3 con **mixing non-stazionario**.
 
 Cosa cambia rispetto alla versione modificata dall'utente:
 - **Bug di indentazione**: tutta la pipeline (propagazione, TAM e metriche) torna **dentro** il ciclo dei round.
-- **Allineamento stabile**: ogni round allineiamo i prototipi \(\hat\Xi\) a \(\Xi\) tramite **Hungarian** e **flip di segno**, cosÃ¬ le componenti di \(\hat\boldsymbol{\pi}\) sono coerenti con l'ordinamento "vero".
+- **Allineamento stabile**: ogni round allineiamo i prototipi \(\hat\Xi\) a \(\Xi\) tramite **Hungarian** e **flip di segno**, così le componenti di \(\hat\boldsymbol{\pi}\) sono coerenti con l'ordinamento "vero".
 - **Stima di \(\hat\boldsymbol{\pi}\)**: classificazione degli esempi del **round corrente** con i prototipi **allineati**.
 - **tqdm** parametrica (seed/round/layer), log TF soppressi, codice pulito e sicuro.
 
@@ -41,18 +41,16 @@ _THIS = Path(__file__).resolve()
 ROOT = _THIS
 while ROOT != ROOT.parent and not (ROOT / "Functions.py").exists():
     ROOT = ROOT.parent
+sys.path.insert(0, str(ROOT))
 
-SRC = ROOT / 'src'
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
-from src.unsup.functions import (
+from Functions import (
     gen_patterns,
     JK_real,
     unsupervised_J,
     propagate_J,
 )
-from src.unsup.networks import TAM_Network
-from src.unsup.dynamics import dis_check
+from Networks import TAM_Network
+from Dynamics import dis_check
 
 # ---------------------------------------------------------------------
 # Iperparametri
@@ -64,7 +62,7 @@ class HyperParams:
     K: int = 3
     N: int = 300
     n_batch: int = 18           # round
-    M_total: int = 1620         # â‰ˆ 30 esempi/client/round
+    M_total: int = 1620         # ≈ 30 esempi/client/round
     r_ex: float = 0.6
 
     # Mixing drift (scheduler globale su round)
@@ -99,7 +97,7 @@ class HyperParams:
     progress_updates: bool = False
 
 # ---------------------------------------------------------------------
-# UtilitÃ  mixing + dataset
+# Utilità mixing + dataset
 # ---------------------------------------------------------------------
 
 def softmax(x: np.ndarray, tau: float = 1.0) -> np.ndarray:
@@ -134,7 +132,7 @@ def schedule_mixing(hp: HyperParams, rng: np.random.Generator) -> np.ndarray:
 
 def gen_dataset_mixing(xi_true: np.ndarray, pis: np.ndarray, M_total: int, r_ex: float,
                        L: int, rng: np.random.Generator) -> np.ndarray:
-    """Genera ETA shape (L, T, M_c, N) campionando Î¼ ~ Categorical(pi_t)."""
+    """Genera ETA shape (L, T, M_c, N) campionando μ ~ Categorical(pi_t)."""
     K, N = xi_true.shape
     T = pis.shape[0]
     M_c = math.ceil(M_total / (L * T))
@@ -177,7 +175,7 @@ def retrieval_and_align(xi_hat: np.ndarray, xi_true: np.ndarray) -> tuple[np.nda
             pad = np.zeros((xi_hat.shape[0], N - xi_hat.shape[1]), dtype=xi_hat.dtype)
             xi_hat = np.concatenate([xi_hat, pad], axis=1)
 
-    # SimilaritÃ  (puÃ² essere negativa): righe = stimati, colonne = veri
+    # Similarità (può essere negativa): righe = stimati, colonne = veri
     M = (xi_hat @ xi_true.T) / float(N)
     M = np.nan_to_num(M, nan=0.0, posinf=0.0, neginf=0.0)
 
@@ -185,7 +183,7 @@ def retrieval_and_align(xi_hat: np.ndarray, xi_true: np.ndarray) -> tuple[np.nda
     cost = 1.0 - np.abs(M)
     rI, cI = linear_sum_assignment(cost)
 
-    # Mappa colonna-â†’riga; alcune colonne possono restare scoperte
+    # Mappa colonna-→riga; alcune colonne possono restare scoperte
     mapping = np.full(K, -1, dtype=int)
     for r, c in zip(rI, cI):
         if 0 <= c < K:
@@ -244,7 +242,7 @@ def ternary_to_xy(p: np.ndarray) -> Tuple[float, float]:
     return x, y
 
 
-def draw_ternary_axes(ax, labels=("Î¾1", "Î¾2", "Î¾3")):
+def draw_ternary_axes(ax, labels=("ξ1", "ξ2", "ξ3")):
     V1 = (0.0, 0.0); V2 = (1.0, 0.0); V3 = (0.5, math.sqrt(3)/2.0)
     ax.plot([V1[0], V2[0], V3[0], V1[0]], [V1[1], V2[1], V3[1], V1[1]], lw=1.2, color="0.3")
     ax.text(V1[0]-0.03, V1[1]-0.03, labels[0], ha="right", va="top")
@@ -351,7 +349,7 @@ def plot_simplex(hp: HyperParams, pis_true: np.ndarray, pis_hat: np.ndarray, out
     colors = [cmap(t / max(1, T-1)) for t in range(T)]
 
     fig, ax = plt.subplots(figsize=(7.2, 7.0), constrained_layout=True)
-    draw_ternary_axes(ax, labels=("Î¾1", "Î¾2", "Î¾3"))
+    draw_ternary_axes(ax, labels=("ξ1", "ξ2", "ξ3"))
 
     xy_true = np.array([ternary_to_xy(pis_true[t]) for t in range(T)])
     xy_hat  = np.array([ternary_to_xy(pis_hat[t])  for t in range(T)])
@@ -386,13 +384,13 @@ def plot_time_panels(hp: HyperParams, tv: np.ndarray, m_per: np.ndarray, out_pat
 
     ax = axes[0]
     ax.plot(rounds, tv, lw=2.0)
-    ax.set_title("IntensitÃ  del drift: TV(Ï€_t, Ï€_{t-1})")
+    ax.set_title("Intensità del drift: TV(π_t, π_{t-1})")
     ax.set_xlabel("round"); ax.set_ylabel("TV")
     ax.grid(True, alpha=0.3)
 
     ax = axes[1]
     for k in range(hp.K):
-        ax.plot(rounds, m_per[:,k], lw=1.8, label=f"m_Î¾{k+1}")
+        ax.plot(rounds, m_per[:,k], lw=1.8, label=f"m_ξ{k+1}")
     ax.set_ylim(0.0, 1.05)
     ax.set_title("Retrieval per archetipo vs round")
     ax.set_xlabel("round"); ax.set_ylabel("Mattis overlap")
@@ -428,7 +426,7 @@ def main():
     with open(exp_dir / "hyperparams.json", "w") as f:
         json.dump(asdict(hp), f, indent=2)
 
-    # Esegui piÃ¹ seed e aggrega (per i pannelli temporali uso medie su seed)
+    # Esegui più seed e aggrega (per i pannelli temporali uso medie su seed)
     rows: List[Dict] = []
     pis_true_all, pis_hat_all, tv_all, m_per_all = [], [], [], []
 

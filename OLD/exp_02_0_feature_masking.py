@@ -1,7 +1,7 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Experiment 02 â€” Feature Masking per Client
+Experiment 02 — Feature Masking per Client
 =========================================
 Scenario (b): ogni client osserva solo una frazione m dei neuroni (feature masking). L'unione dei client
 copre (quasi) tutte le feature, ma ogni client invia statistiche parziali. I round servono a mediare il rumore
@@ -36,7 +36,7 @@ import seaborn as sns
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")  # 3=ERROR only
 # Disabilita ottimizzazioni oneDNN per eliminare l'avviso opzionale
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
-try:  # import lazy: se TF non Ã¨ installato non fallisce
+try:  # import lazy: se TF non è installato non fallisce
     import tensorflow as tf  # type: ignore
     try:
         tf.get_logger().setLevel('ERROR')
@@ -56,7 +56,7 @@ except Exception:
 # ---------------------------------------------------------------------
 # tqdm (opzionale) per barre di avanzamento
 # ---------------------------------------------------------------------
-try:  # uso auto per compatibilitÃ  notebook/console
+try:  # uso auto per compatibilità notebook/console
     from tqdm.auto import trange, tqdm  # type: ignore
     _TQDM_AVAILABLE = True
 except Exception:  # pragma: no cover - fallback se tqdm non presente
@@ -71,19 +71,17 @@ except Exception:  # pragma: no cover - fallback se tqdm non presente
 # ---------------------------------------------------------------------
 # Root del progetto (cartella UNSUP) = parent della directory 'stress_tests'
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
-SRC = ROOT / 'src'
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
-from src.unsup.functions import (
+from Functions import (
     gen_patterns,
     JK_real,
     unsupervised_J,
     propagate_J,
     estimate_K_eff_from_J,
 )
-from src.unsup.networks import TAM_Network
-from src.unsup.dynamics import dis_check
+from Networks import TAM_Network
+from Dynamics import dis_check
 
 # ---------------------------------------------------------------------
 # Dataclass iperparametri e contenitori
@@ -121,7 +119,7 @@ class HyperParams:
     use_tqdm_seeds: bool = True    # barra esterna sui seed
     use_tqdm_rounds: bool = True   # barra interna sui round
     use_tqdm_updates: bool = False # barra iterazioni interne (dis_check)
-    # retro-compat: vecchio flag (non piÃ¹ usato direttamente)
+    # retro-compat: vecchio flag (non più usato direttamente)
     use_tqdm: bool = True
 
 @dataclass
@@ -172,7 +170,7 @@ def gen_dataset_feature_masking(
     Ritorna
     -------
     ETA : array (L, n_batch, M_c, N)
-    labels : array (L, n_batch, M_c) con l'indice Î¼ generativo per ogni esempio
+    labels : array (L, n_batch, M_c) con l'indice μ generativo per ogni esempio
     """
     K, N = xi_true.shape
     M_c = math.ceil(M_total / (L * n_batch))
@@ -199,7 +197,7 @@ def gen_dataset_feature_masking(
 
 def _client_J_with_mask(E_l: np.ndarray, mask_l: np.ndarray, K: int) -> Tuple[np.ndarray, np.ndarray]:
     """Hebb non supervisionato su client l con rinormalizzazione per N_obs e peso pairwise.
-    Ritorna J_l_masked (NxN) e W_l = mask_l âŠ— mask_l (NxN) per l'aggregazione.
+    Ritorna J_l_masked (NxN) e W_l = mask_l ⊗ mask_l (NxN) per l'aggregazione.
     """
     N = E_l.shape[1]
     N_obs = int(mask_l.sum())
@@ -397,7 +395,7 @@ def aggregate_and_plot(hp: HyperParams, results: List[SeedResult], exp_dir: Path
     ax.plot(rounds, f_mean, label="Frobenius rel.")
     ax.fill_between(rounds, f_mean - f_se, f_mean + f_se, alpha=0.2)
     ax.set_xlabel("round")
-    ax.set_ylabel("||Jâˆ’J*||_F / ||J*||_F")
+    ax.set_ylabel("||J−J*||_F / ||J*||_F")
     ax.set_title("Convergenza strutturale di J")
     ax.grid(True, alpha=0.3)
 
@@ -413,7 +411,7 @@ def aggregate_and_plot(hp: HyperParams, results: List[SeedResult], exp_dir: Path
     ax2.set_ylabel("SNR")
     ax.set_xlabel("round")
     ax.set_ylabel("K_eff")
-    ax.set_title(f"Rank efficace e SNR (pair coverageâ‰ˆ{pair_cov:.2f})")
+    ax.set_title(f"Rank efficace e SNR (pair coverage≈{pair_cov:.2f})")
     ax.grid(True, alpha=0.3)
 
     # Legenda combinata
@@ -497,7 +495,7 @@ def main():
             else:
                 print(
                     f"[seed {seed}] m_final={res.m_final:.3f} G_ext={res.G_ext:.3f} "
-                    f"fro_final={res.fro_final:.3f} Î”K={res.deltaK} covâ‰ˆ{res.pair_coverage:.2f}"
+                    f"fro_final={res.fro_final:.3f} ΔK={res.deltaK} cov≈{res.pair_coverage:.2f}"
                 )
 
     aggregate_and_plot(hp, results, exp_dir)

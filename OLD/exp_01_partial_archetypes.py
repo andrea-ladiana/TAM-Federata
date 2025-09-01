@@ -1,22 +1,22 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Experiment 01 â€” Partial Archetype Coverage per Client
+Experiment 01 — Partial Archetype Coverage per Client
 =====================================================
 Scenario (a): ogni client vede solo un sottoinsieme di archetipi; l'unione sui client copre K.
 
 Cosa fa questo script
 ---------------------
-1) Genera K archetipi veri (Î¾) su N neuroni.
+1) Genera K archetipi veri (ξ) su N neuroni.
 2) Associa ad ogni client l un sottoinsieme S_l di archetipi (|S_l| = K_per_client), con \bigcup_l S_l = {1..K}.
 3) Genera un dataset unsupervised ETA con solo archetipi in S_l per ciascun client e round.
-4) Esegue una dinamica federata in piÃ¹ round con blending J_rec = w*J_unsup + (1-w)*J_hebb_prev (Hebb su archetipi ricostruiti al round precedente, se disponibili), quindi proietta J con "propagate_J".
+4) Esegue una dinamica federata in più round con blending J_rec = w*J_unsup + (1-w)*J_hebb_prev (Hebb su archetipi ricostruiti al round precedente, se disponibili), quindi proietta J con "propagate_J".
 5) Disentangling tramite TAM e metriche:
    - m_series: retrieval medio (overlap di Mattis) per round (extend)
    - fro_series: Frobenius relativa ||J - J*||_F / ||J*||_F per round
-   - K_eff_series: stima del rank efficace con metodo MP (Marchenkoâ€“Pastur) sulla proiezione propagata
+   - K_eff_series: stima del rank efficace con metodo MP (Marchenko–Pastur) sulla proiezione propagata
    - coverage_series: frazione di archetipi realmente visti nel dataset (extend) fino al round t
-6) Ripete per piÃ¹ seed, aggrega le serie (media e SE) e salva grafico Seaborn.
+6) Ripete per più seed, aggrega le serie (media e SE) e salva grafico Seaborn.
 7) Scrive sottocartella dell'esperimento e della specifica scelta di iperparametri, con:
    - hyperparams.json
    - log.jsonl (una riga per seed + dati riassuntivi/serie)
@@ -49,7 +49,7 @@ except Exception:  # pragma: no cover
 # nei moduli locali. Deve essere prima di eventuali import TF.
 # ---------------------------------------------------------------------
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")  # 0=ALL,1=INFO off,2=INFO+WARNING off,3=ERR off
-try:  # configurazione post-import (se giÃ  caricato altrove non crasha)
+try:  # configurazione post-import (se già caricato altrove non crasha)
     import tensorflow as tf  # type: ignore
     tf.get_logger().setLevel('ERROR')
     try:
@@ -65,23 +65,21 @@ except Exception:
 # Import dei tuoi moduli locali
 # ---------------------------------------------------------------------
 # Assumiamo che questo file sia in: <ROOT>/stress_tests/exp_01_partial_archetypes.py
-# <ROOT> Ã¨ la cartella che contiene Functions.py, Networks.py, Dynamics.py.
-# Quindi saliamo solo di 1 livello (parent.parent rispetto al file Ã¨ la root UNSUP?).
+# <ROOT> è la cartella che contiene Functions.py, Networks.py, Dynamics.py.
+# Quindi saliamo solo di 1 livello (parent.parent rispetto al file è la root UNSUP?).
 ROOT = Path(__file__).resolve().parent.parent  # .../UNSUP
 if str(ROOT) not in sys.path:
-    pass
-SRC = ROOT / 'src'
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
-from src.unsup.functions import (
+    sys.path.insert(0, str(ROOT))
+
+from Functions import (
     gen_patterns,
     JK_real,
     unsupervised_J,
     propagate_J,
     estimate_K_eff_from_J,
 )
-from src.unsup.networks import TAM_Network
-from src.unsup.dynamics import (
+from Networks import TAM_Network
+from Dynamics import (
     new_round,      # lo riutilizziamo per coerenza strutturale del codice
     dis_check,
 )
@@ -153,7 +151,7 @@ def make_client_subsets(K: int, L: int, K_per_client: int, rng: np.random.Genera
     if K_per_client <= 0:
         raise ValueError("K_per_client deve essere > 0")
     if K_per_client > K:
-        raise ValueError("K_per_client non puÃ² superare K")
+        raise ValueError("K_per_client non può superare K")
     subsets: List[List[int]] = [[] for _ in range(L)]
     # Fase 1: garantisci copertura
     for i, mu in enumerate(rng.permutation(K)):
@@ -188,8 +186,8 @@ def gen_dataset_partial_archetypes(
 
     Ritorna
     -------
-    ETA : array (L, n_batch, M_c, N)  con M_c â‰ˆ ceil(M_total/(L*n_batch))
-    labels : array (L, n_batch, M_c)   indice Î¼ usato per ciascun esempio (per coverage)
+    ETA : array (L, n_batch, M_c, N)  con M_c ≈ ceil(M_total/(L*n_batch))
+    labels : array (L, n_batch, M_c)   indice μ usato per ciascun esempio (per coverage)
     """
     K, N = xi_true.shape
     M_c = math.ceil(M_total / (L * n_batch))
@@ -207,7 +205,7 @@ def gen_dataset_partial_archetypes(
         for b in inner_batches:
             mus = rng.choice(allowed, size=M_c, replace=True)
             labels[l, b] = mus
-            # Costruisci M_c esempi scegliendo Î¼ e flippando bit indipendenti
+            # Costruisci M_c esempi scegliendo μ e flippando bit indipendenti
             probs = rng.uniform(size=(M_c, N))
             chi = np.where(probs <= p_keep, 1.0, -1.0)
             xi_sel = xi_true[mus]  # (M_c, N)
@@ -220,7 +218,7 @@ def gen_dataset_partial_archetypes(
 
 def _mean_unsup_J_per_layer(tensor_L_M_N: np.ndarray, K: int) -> Tuple[np.ndarray, int]:
     """Media J non supervisionate sui layer, coerente con Dynamics.py.
-    Nota: M_eff_param = M_eff_actual // K per compatibilitÃ  con la normalizzazione del notebook.
+    Nota: M_eff_param = M_eff_actual // K per compatibilità con la normalizzazione del notebook.
     """
     L_loc, M_eff_actual, N_loc = tensor_L_M_N.shape
     M_eff_param = max(1, M_eff_actual // K)
@@ -232,8 +230,8 @@ def deduplicate_patterns(xi: np.ndarray, K_target: int, overlap_thresh: float) -
     """Deduplica (non-maximum suppression) i pattern in xi usando overlap di Mattis assoluto.
 
     Strategia greedy: scorri i pattern nell'ordine dato, tieni il primo, elimina quelli
-    con overlap >= soglia rispetto a pattern giÃ  tenuti. Se al termine meno di K_target
-    pattern restano, riempie con pattern rimossi massimizzando la dissimilaritÃ .
+    con overlap >= soglia rispetto a pattern già tenuti. Se al termine meno di K_target
+    pattern restano, riempie con pattern rimossi massimizzando la dissimilarità.
     """
     if xi is None or xi.size == 0:
         return xi
@@ -288,7 +286,7 @@ def run_one_seed(hp: HyperParams, seed: int, *, out_dir: Path) -> SeedResult:
         xi_true, hp.M_total, hp.r_ex, hp.n_batch, hp.L, client_sets, rng, show_bar=hp.pb_dataset
     )
 
-    # 3) Loop round con single/extend; manteniamo Î¾r_ref per blending Hebb
+    # 3) Loop round con single/extend; manteniamo ξr_ref per blending Hebb
     xi_ref = None
     fro_extend_rounds: List[float] = []
     magn_extend_rounds: List[float] = []
@@ -338,7 +336,7 @@ def run_one_seed(hp: HyperParams, seed: int, *, out_dir: Path) -> SeedResult:
         Net.prepare(J_rec_extend, hp.L)
         xi_r_ext, magn_ext = dis_check(
             autov_ext, hp.K, hp.L, J_rec_extend, JKS_iter_ext,
-            xi_true, updates=hp.updates, show_bar=hp.pb_dynamics
+            ξ=xi_true, updates=hp.updates, show_bar=hp.pb_dynamics
         )
         xi_ref = xi_r_ext
 
@@ -364,7 +362,7 @@ def run_one_seed(hp: HyperParams, seed: int, *, out_dir: Path) -> SeedResult:
         order0 = np.argsort(np.real(vals0))[::-1]
         autov0 = np.real(vecs0[:, order0[: hp.K]]).T
     xi_r_first, magn_first = dis_check(autov0, hp.K, hp.L, J_unsup_first, JKS_first,
-                                       xi_true, updates=hp.updates, show_bar=hp.pb_dynamics)
+                                       ξ=xi_true, updates=hp.updates, show_bar=hp.pb_dynamics)
 
     # Overlap medio (Hungarian matching) su first/final
     def _match_and_overlap(estimated: np.ndarray, true: np.ndarray) -> float:
@@ -445,7 +443,7 @@ def aggregate_and_plot(hp: HyperParams, results: List[SeedResult], exp_dir: Path
     ax.plot(rounds, f_mean, label="Frobenius rel.")
     ax.fill_between(rounds, f_mean - f_se, f_mean + f_se, alpha=0.2)
     ax.set_xlabel("round")
-    ax.set_ylabel("||Jâˆ’J*||_F / ||J*||_F")
+    ax.set_ylabel("||J−J*||_F / ||J*||_F")
     ax.set_title("Convergenza strutturale di J")
     ax.grid(True, alpha=0.3)
 
@@ -508,7 +506,7 @@ def main():
     with open(exp_dir / "hyperparams.json", "w") as f:
         json.dump(asdict(hp), f, indent=2)
 
-    # Esecuzione su piÃ¹ seed
+    # Esecuzione su più seed
     results: List[SeedResult] = []
     log_path = exp_dir / "log.jsonl"
     with open(log_path, "w") as flog:
@@ -538,9 +536,9 @@ def main():
             }
             flog.write(json.dumps(row) + "\n")
             try:
-                tqdm.write(f"[seed {seed}] m_final={res.m_final:.3f} G_ext={res.G_ext:.3f} fro_final={res.fro_final:.3f} Î”K={res.deltaK}")
+                tqdm.write(f"[seed {seed}] m_final={res.m_final:.3f} G_ext={res.G_ext:.3f} fro_final={res.fro_final:.3f} ΔK={res.deltaK}")
             except Exception:
-                print(f"[seed {seed}] m_final={res.m_final:.3f} G_ext={res.G_ext:.3f} fro_final={res.fro_final:.3f} Î”K={res.deltaK}")
+                print(f"[seed {seed}] m_final={res.m_final:.3f} G_ext={res.G_ext:.3f} fro_final={res.fro_final:.3f} ΔK={res.deltaK}")
 
     # Grafico aggregato
     aggregate_and_plot(hp, results, exp_dir)
@@ -548,4 +546,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

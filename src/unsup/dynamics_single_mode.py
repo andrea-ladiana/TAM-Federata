@@ -5,14 +5,14 @@ from typing import Any, Dict, List, Tuple
 # Reuse core primitives from existing modules (kept intact)
 # Import lazily to avoid hard failure if dynamics has encoding issues in some environments
 try:
-    from .dynamics import (
+    from src.unsup.dynamics import (
         new_round,
         dis_check,
     )
 except Exception:  # pragma: no cover
-    def new_round(*args, **kwargs):  # type: ignore
+    def new_round(*args, **kwargs) -> Any:  # type: ignore
         raise ImportError("new_round unavailable: failed to import from unsup.dynamics")
-    def dis_check(*args, **kwargs):  # type: ignore
+    def dis_check(*args, **kwargs) -> Any:  # type: ignore
         raise ImportError("dis_check unavailable: failed to import from unsup.dynamics")
 
 # Local helpers mirroring Dynamics.py impl (imported lazily where needed)
@@ -116,7 +116,7 @@ def run_experiment_single_mode(base_params: Dict[str, Any], w_value: float, seed
         vals, vecs = np.linalg.eig(JKS_iter)
         mask = (np.real(vals) > 0.5)
         autov = np.real(vecs[:, mask]).T
-        xi_hat, Magn = dis_check(autov, K, L, J_rec, JKS_iter, xi=xi_true, updates=up, show_bar=False)
+        xi_hat, Magn = dis_check(autov, K, L, J_rec, JKS_iter, ξ=xi_true, updates=up, show_bar=False)
         xi_ref = xi_hat
 
         fro_rel = _fro_norm_rel(JKS_iter, J_star)
@@ -124,8 +124,13 @@ def run_experiment_single_mode(base_params: Dict[str, Any], w_value: float, seed
         magn_single_rounds.append(float(np.mean(Magn)))
         if use_mp:
             try:
-                K_eff_mp, _, _ = estimate_K_eff_from_J(JKS_iter, method='shuffle', M_eff=M_eff_round,
-                                                       alpha=shuffle_alpha, random=shuffle_random)
+                K_eff_mp, _, _ = estimate_K_eff_from_J(
+                    JKS_iter,
+                    method='shuffle',
+                    M_eff=M_eff_round,
+                    alpha=shuffle_alpha,
+                    n_random=shuffle_random,
+                )
             except Exception:
                 K_eff_mp = autov.shape[0]
         else:
@@ -145,9 +150,14 @@ def run_experiment_single_mode(base_params: Dict[str, Any], w_value: float, seed
     xi_first, Magn_first = dis_check(autov0, K, L, J_unsup_first, JKS_first, xi=xi_true, updates=up, show_bar=False)
 
     m_first, _, _ = _match_and_overlap(xi_first, xi_true)
-    m_final, _, _ = _match_and_overlap(patterns_final, xi_true)
-    G_single = m_final - m_first
-    deltaK = abs(int(K_eff_final) - int(K))
+    if patterns_final is not None and K_eff_final is not None:
+        m_final, _, _ = _match_and_overlap(patterns_final, xi_true)
+        G_single = m_final - m_first
+        deltaK = abs(int(K_eff_final) - int(K))
+    else:
+        m_final = m_first
+        G_single = 0.0
+        deltaK = 0
 
     result = {
         'mode': 'single',
@@ -156,13 +166,13 @@ def run_experiment_single_mode(base_params: Dict[str, Any], w_value: float, seed
         'm_retr_first': m_first,
         'm_retr_final': m_final,
         'G_single': G_single,
-        'fro_final': fro_single_rounds[-1],
-        'fro_AUC': float(np.trapz(fro_single_rounds, dx=1) / max(1, len(fro_single_rounds) - 1)),
-        'm_AUC': float(np.trapz(magn_single_rounds, dx=1) / max(1, len(magn_single_rounds) - 1)),
+        'fro_final': fro_single_rounds[-1] if fro_single_rounds else 0.0,
+        'fro_AUC': float(float(np.trapz(fro_single_rounds, dx=1)) / max(1, len(fro_single_rounds) - 1)) if fro_single_rounds else 0.0,
+        'm_AUC': float(float(np.trapz(magn_single_rounds, dx=1)) / max(1, len(magn_single_rounds) - 1)) if magn_single_rounds else 0.0,
         'deltaK': deltaK,
-        'K_eff_final': int(K_eff_final),
+        'K_eff_final': int(K_eff_final if K_eff_final is not None else 0),
         'patterns_final': patterns_final,
-        'magn_final_mean': float(np.mean(magn_single_rounds)),
+        'magn_final_mean': float(np.mean(magn_single_rounds)) if magn_single_rounds else 0.0,
         'magn_first_mean': float(magn_single_rounds[0]),
         'fro_series': fro_single_rounds,
         'm_series': magn_single_rounds,
@@ -260,6 +270,9 @@ def refine_grid_search_single(initial_report: dict,
     import json, csv, os
     from pathlib import Path
     import matplotlib.pyplot as plt
+
+    if weights is None:
+        weights = dict(alpha=0.5, beta=0.3, gamma=0.1, delta=0.05, epsilon=0.05)
 
     Path(results_dir).mkdir(parents=True, exist_ok=True)
     history = []

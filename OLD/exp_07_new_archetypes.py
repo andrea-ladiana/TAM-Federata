@@ -1,7 +1,7 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Experiment 07 â€” Comparsa di nuovi archetipi a metÃ  training (Grafico 7)
+Experiment 07 — Comparsa di nuovi archetipi a metà training (Grafico 7)
 =====================================================================
 Obiettivo: simulare l'introduzione di **nuovi archetipi** durante il training federato e
 confrontare una **baseline lenta** con una variante **reattiva** (EMA + w adattivo).
@@ -16,7 +16,7 @@ Output nella cartella dell'esperimento:
 - hyperparams.json
 - log.jsonl (una riga per seed/strategia/round con metriche complete)
 - results_table.csv (riassunto finale per seed/strategia)
-- fig_grafico7.png (pannello 2Ã—2: K_eff, retrieval old/new, gap spettrale, errore di mixing)
+- fig_grafico7.png (pannello 2×2: K_eff, retrieval old/new, gap spettrale, errore di mixing)
 
 Richieste rispettate:
 - uso estensivo di tqdm
@@ -43,23 +43,23 @@ import seaborn as sns
 from tqdm.auto import tqdm
 
 # ---------------------------------------------------------------------
-# Import moduli di progetto: risali finchÃ© non trovi Functions.py
+# Import moduli di progetto: risali finché non trovi Functions.py
 # ---------------------------------------------------------------------
 _THIS = Path(__file__).resolve()
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = _THIS
+while ROOT != ROOT.parent and not (ROOT / "Functions.py").exists():
+    ROOT = ROOT.parent
+sys.path.insert(0, str(ROOT))
 
-SRC = ROOT / 'src'
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
-from src.unsup.functions import (
+from Functions import (
     gen_patterns,
     JK_real,
     unsupervised_J,
     propagate_J,
     estimate_K_eff_from_J,
 )
-from src.unsup.networks import TAM_Network
-from src.unsup.dynamics import dis_check
+from Networks import TAM_Network
+from Dynamics import dis_check
 
 # ---------------------------------------------------------------------
 # Iperparametri
@@ -67,12 +67,12 @@ from src.unsup.dynamics import dis_check
 @dataclass
 class HyperParams:
     # Modello / dataset
-    L: int = 5                 # piÃ¹ client per statistica
+    L: int = 5                 # più client per statistica
     K_old: int = 3
     K_new: int = 3
     N: int = 400
     n_batch: int = 24          # round totali (T)
-    M_total: int = 2400        # â‰ˆ 20 esempi/client/round
+    M_total: int = 2400        # ≈ 20 esempi/client/round
     r_ex: float = 0.6
 
     # Introduzione nuovi archetipi
@@ -91,7 +91,7 @@ class HyperParams:
     w_tau: float = 0.10        # soglia per TV stimata (pi_hat) per aumentare w
     w_scale: float = 0.05      # pendenza della sigmoide per w_t
 
-    # Rilevazione novitÃ 
+    # Rilevazione novità
     detect_patience: int = 2   # round consecutivi con K_eff >= K_old+1 per espandere
 
     # Dinamica TAM
@@ -120,7 +120,7 @@ class HyperParams:
 # ---------------------------------------------------------------------
 
 def build_mixing_schedule(hp: HyperParams, rng: np.random.Generator) -> np.ndarray:
-    """Costruisce pi_true(t) âˆˆ R^{TÃ—K_tot}.
+    """Costruisce pi_true(t) ∈ R^{T×K_tot}.
     Prima di t_intro: massa solo su K_old, bilanciata (o piccole fluttuazioni). Dopo:
     rampa di lunghezza ramp_len che porta una quota alpha_max ai nuovi, bilanciata tra loro.
     I vecchi vengono riscalati a 1-alpha(t).
@@ -159,7 +159,7 @@ def tv_distance(p: np.ndarray, q: np.ndarray) -> float:
 
 def retrieval_and_align(xi_hat: np.ndarray, xi_true: np.ndarray) -> Tuple[np.ndarray, float, np.ndarray]:
     """Hungarian + flip di segno robusto. Ritorna (m_per, m_mean, xi_aligned).
-    xi_aligned Ã¨ ordinato come xi_true (dimensione K_true Ã— N).
+    xi_aligned è ordinato come xi_true (dimensione K_true × N).
     """
     from scipy.optimize import linear_sum_assignment
     K, N = xi_true.shape
@@ -251,7 +251,7 @@ def run_one_seed_strategy(
     ETA = np.zeros((hp.L, T, M_c, hp.N), dtype=np.float32)
     for l in range(hp.L):
         for t in range(T):
-            # visibilitÃ  non-IID: se client non ha ancora "nuovi", azzera le componenti nuove
+            # visibilità non-IID: se client non ha ancora "nuovi", azzera le componenti nuove
             p_t = pi_true[t].copy()
             if t <= hp.t_intro or client_has_new[l] == 0:
                 p_t[hp.K_old:] = 0.0
@@ -373,14 +373,14 @@ def run_one_seed_strategy(
         # mantieni riferimento per il prossimo round (Hebb memoria)
         xi_ref = xi_r
 
-        # Allinea ai veri archetipi (sempre K_tot Ã— N)
+        # Allinea ai veri archetipi (sempre K_tot × N)
         m_per, m_mean, xi_aligned = retrieval_and_align(xi_ref, xi_true)
         # Media separata su vecchi e nuovi
         m_old.append(float(np.mean(m_per[:hp.K_old])))
         if t <= hp.t_intro:
             m_new.append(np.nan)
         else:
-            # se K_work < K_tot, l'allineamento puÃ² usare prototipi riutilizzati â†’ trend comunque informativo
+            # se K_work < K_tot, l'allineamento può usare prototipi riutilizzati → trend comunque informativo
             m_new.append(float(np.mean(m_per[hp.K_old:])))
 
         # Stima mixing dal round corrente (tutti i client)
@@ -406,7 +406,7 @@ def run_one_seed_strategy(
     }
 
 # ---------------------------------------------------------------------
-# Aggregazione e grafico 7 (2Ã—2)
+# Aggregazione e grafico 7 (2×2)
 # ---------------------------------------------------------------------
 
 def aggregate_and_plot(hp: HyperParams, rows: List[Dict], out_dir: Path) -> None:
@@ -459,13 +459,13 @@ def aggregate_and_plot(hp: HyperParams, rows: List[Dict], out_dir: Path) -> None
     # A) K_eff vs round + K_true
     ax = axes[0, 0]
     for strat, df_s in g.groupby("strategy"):
-        ax.plot(df_s["round"], df_s["K_eff_mean"], label=f"K_eff â€” {strat}", linewidth=2.0)
-    # veritÃ  a pezzi (media identica su strategie)
+        ax.plot(df_s["round"], df_s["K_eff_mean"], label=f"K_eff — {strat}", linewidth=2.0)
+    # verità a pezzi (media identica su strategie)
     df_true = g[g["strategy"] == g["strategy"].unique()[0]]
     ax.plot(df_true["round"], df_true["K_true_mean"], linestyle=":", linewidth=2.0, color="black", label="K (vero)")
     ax.axvline(hp.t_intro, color="0.4", linestyle="--", linewidth=1.2)
     ax.axvspan(hp.t_intro, hp.t_intro + hp.ramp_len, color="0.6", alpha=0.08)
-    ax.set_title("A) Rilevazione di novitÃ : K_eff vs round")
+    ax.set_title("A) Rilevazione di novità: K_eff vs round")
     ax.set_xlabel("round"); ax.set_ylabel("K_eff")
     ax.set_ylim(bottom=hp.K_old - 0.8, top=hp.K_old + hp.K_new + 1.2)
     ax.grid(True, alpha=0.3)
@@ -474,8 +474,8 @@ def aggregate_and_plot(hp: HyperParams, rows: List[Dict], out_dir: Path) -> None
     # B) Retrieval old/new vs round
     ax = axes[0, 1]
     for strat, df_s in g.groupby("strategy"):
-        ax.plot(df_s["round"], df_s["m_old_mean"], linewidth=2.0, label=f"old â€” {strat}")
-        ax.plot(df_s["round"], df_s["m_new_mean"], linewidth=2.0, linestyle="--", label=f"new â€” {strat}")
+        ax.plot(df_s["round"], df_s["m_old_mean"], linewidth=2.0, label=f"old — {strat}")
+        ax.plot(df_s["round"], df_s["m_new_mean"], linewidth=2.0, linestyle="--", label=f"new — {strat}")
     ax.axvline(hp.t_intro, color="0.4", linestyle="--", linewidth=1.2)
     ax.axvspan(hp.t_intro, hp.t_intro + hp.ramp_len, color="0.6", alpha=0.08)
     ax.set_title("B) Retrieval vecchi vs nuovi archetipi")
@@ -490,7 +490,7 @@ def aggregate_and_plot(hp: HyperParams, rows: List[Dict], out_dir: Path) -> None
         ax.plot(df_s["round"], df_s["gap_mean"], linewidth=2.0, label=strat)
     ax.axvline(hp.t_intro, color="0.4", linestyle="--", linewidth=1.2)
     ax.axvspan(hp.t_intro, hp.t_intro + hp.ramp_len, color="0.6", alpha=0.08)
-    ax.set_title("C) Gap spettrale (Î»_Kâˆ’Î»_{K+1})/Î»_K")
+    ax.set_title("C) Gap spettrale (λ_K−λ_{K+1})/λ_K")
     ax.set_xlabel("round"); ax.set_ylabel("gap")
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best")
@@ -501,8 +501,8 @@ def aggregate_and_plot(hp: HyperParams, rows: List[Dict], out_dir: Path) -> None
         ax.plot(df_s["round"], df_s["mix_err_mean"], linewidth=2.0, label=strat)
     ax.axvline(hp.t_intro, color="0.4", linestyle="--", linewidth=1.2)
     ax.axvspan(hp.t_intro, hp.t_intro + hp.ramp_len, color="0.6", alpha=0.08)
-    ax.set_title("D) Errore di mixing âˆ¥Ï€_tâˆ’\u005Chat{Ï€}_tâˆ¥_1")
-    ax.set_xlabel("round"); ax.set_ylabel("||Â·||_1")
+    ax.set_title("D) Errore di mixing ∥π_t−\u005Chat{π}_t∥_1")
+    ax.set_xlabel("round"); ax.set_ylabel("||·||_1")
     ax.grid(True, alpha=0.3)
     ax.legend(loc="upper right")
 
@@ -516,7 +516,7 @@ def aggregate_and_plot(hp: HyperParams, rows: List[Dict], out_dir: Path) -> None
 # ---------------------------------------------------------------------
 
 def main():
-    # Istanziazione esplicita degli iperparametri (stile exp_06) â€” modifica liberamente.
+    # Istanziazione esplicita degli iperparametri (stile exp_06) — modifica liberamente.
     hp = HyperParams(
         # Modello / dataset
         L=3,
@@ -543,7 +543,7 @@ def main():
         w_tau=0.10,
         w_scale=0.05,
 
-        # Rilevazione novitÃ 
+        # Rilevazione novità
         detect_patience=2,
 
         # Dinamica TAM
@@ -613,6 +613,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-

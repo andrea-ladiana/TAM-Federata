@@ -1,7 +1,7 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Experiment 05 â€” Client bizantini e aggregazione robusta a confronto
+Experiment 05 — Client bizantini e aggregazione robusta a confronto
 ===================================================================
 Confronto tra diversi **aggregatori lato server** in presenza di una frazione di client **bizantini**.
 Si misura l'effetto sul recupero degli archetipi e sulla struttura di J.
@@ -15,7 +15,7 @@ Acronimi (espansione alla prima occorrenza):
 Aggregatori implementati:
 - mean (media semplice)
 - median (mediana coordinata)
-- trimmed (trimmed-mean coordinato, con trim Î± per lato)
+- trimmed (trimmed-mean coordinato, con trim α per lato)
 - gmedian (GM su vettore upper-tri, Weiszfeld)
 - mkrum (Multi-Krum su vettore upper-tri)
 
@@ -30,7 +30,7 @@ Output per esecuzione:
 - hyperparams.json
 - log.jsonl (una riga per combinazione (fb, aggregator, seed) con serie per round)
 - results_table.csv (riassunto finale per grafici)
-- fig_robustness.png (Seaborn, 2Ã—2)
+- fig_robustness.png (Seaborn, 2×2)
 
 Note richieste:
 - uso estensivo di tqdm
@@ -61,19 +61,17 @@ from tqdm.auto import tqdm
 # ---------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
-    pass
-SRC = ROOT / 'src'
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
-from src.unsup.functions import (
+    sys.path.insert(0, str(ROOT))
+
+from Functions import (
     gen_patterns,
     JK_real,
     unsupervised_J,
     propagate_J,
     estimate_K_eff_from_J,
 )
-from src.unsup.networks import TAM_Network
-from src.unsup.dynamics import dis_check
+from Networks import TAM_Network
+from Dynamics import dis_check
 
 # ---------------------------------------------------------------------
 # Iperparametri
@@ -81,11 +79,11 @@ from src.unsup.dynamics import dis_check
 @dataclass
 class HyperParams:
     # Modello / dataset
-    L: int = 9               # piÃ¹ client per senso statistico robusto
+    L: int = 9               # più client per senso statistico robusto
     K: int = 6
     N: int = 400
     n_batch: int = 12
-    M_total: int = 2160      # â‰ˆ 20 esempi/client/round
+    M_total: int = 2160      # ≈ 20 esempi/client/round
     r_ex: float = 0.6
 
     # Federated blending
@@ -93,8 +91,8 @@ class HyperParams:
 
     # Attacco bizantino
     attack_type: str = "mix"  # {signflip, rank1, collude, permute, mix}
-    a_scale: float = 1.0      # intensitÃ  per signflip
-    b_rank1: float = 2.0      # intensitÃ  per rank1
+    a_scale: float = 1.0      # intensità per signflip
+    b_rank1: float = 2.0      # intensità per rank1
     fb_grid: Optional[List[float]] = field(default=None)  # frazioni di malevoli (impostato nel main)
 
     # Aggregatori
@@ -157,7 +155,7 @@ def safe_propagate(J: np.ndarray, *, iters: int = 1, max_steps: int = 300, clip:
     return 0.5 * (JKS + JKS.T)
 
 # ---------------------------------------------------------------------
-# UtilitÃ : vettorizzazione upper-tri e ricostruzione
+# Utilità: vettorizzazione upper-tri e ricostruzione
 # ---------------------------------------------------------------------
 
 def upper_tri_indices(N: int) -> Tuple[np.ndarray, np.ndarray]:
@@ -211,7 +209,7 @@ def spectral_clip(J: np.ndarray, tau: float) -> np.ndarray:
 
 
 def coord_clip(Js: List[np.ndarray], k: float) -> List[np.ndarray]:
-    """Clip coordinato rispetto a medianÂ±k*MAD sulle coordinate (upper-tri) tra client.
+    """Clip coordinato rispetto a median±k*MAD sulle coordinate (upper-tri) tra client.
     Attento: costo O(L*N^2). Usare su L moderati e N<=400.
     """
     if len(Js) <= 2:
@@ -239,7 +237,7 @@ def local_J(E_l: np.ndarray, K: int, *, symmetrize: bool = True, zero_diag: bool
 
 
 def orthogonal_noise_direction(xi_true: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-    r"""Costruisce un vettore v \\in {Â±1}^N e lo ortogonalizza rispetto allo span degli archetipi veri."""
+    r"""Costruisce un vettore v \\in {±1}^N e lo ortogonalizza rispetto allo span degli archetipi veri."""
     K, N = xi_true.shape
     v = rng.choice([-1.0, 1.0], size=(N,), replace=True).astype(np.float32)
     # proietta fuori dallo span delle xi
@@ -335,7 +333,7 @@ def pairwise_sq_dists(V: np.ndarray) -> np.ndarray:
 
 def agg_mkrum(Js: List[np.ndarray], m: int | None) -> np.ndarray:
     """Multi-Krum: seleziona m vettori con punteggio minore e fa media.
-    Se m Ã¨ None: m = max(1, L - f_b_est - 2) con f_b_est = floor((L-2)/2)
+    Se m è None: m = max(1, L - f_b_est - 2) con f_b_est = floor((L-2)/2)
     (scelta conservativa se non noto il numero di malevoli esatto).
     """
     N = Js[0].shape[0]
@@ -343,7 +341,7 @@ def agg_mkrum(Js: List[np.ndarray], m: int | None) -> np.ndarray:
     V = np.stack([to_upper_vec(J, iu) for J in Js], axis=0)
     L = V.shape[0]
     D2 = pairwise_sq_dists(V)
-    # per ciascun l, somma le distanze ai L-2 piÃ¹ vicini
+    # per ciascun l, somma le distanze ai L-2 più vicini
     k = max(1, L - 2)
     scores = np.partition(D2, kth=k-1, axis=1)[:, :k].sum(axis=1)
     idx = np.argsort(scores)
@@ -553,18 +551,18 @@ def aggregate_and_plot(hp: HyperParams, rows: List[Dict], out_dir: Path) -> None
     # 2) Backdoor score vs fb
     ax = axes[0, 1]
     sns.pointplot(data=df, x="fb", y="backdoor_final", hue="aggregator", errorbar=("se", 1), dodge=True, ax=ax)
-    ax.set_title("Backdoor score vs fb (piÃ¹ basso = meglio)")
+    ax.set_title("Backdoor score vs fb (più basso = meglio)")
     ax.set_xlabel("fb")
     ax.set_ylabel("|<xi_hat, v>|/N (finale)")
     ax.grid(True, alpha=0.3)
     ax.legend(title="", bbox_to_anchor=(1.02, 1), loc="upper left")
 
-    # 3) StabilitÃ  spettrale: SNR e gap vs fb (mostro gap)
+    # 3) Stabilità spettrale: SNR e gap vs fb (mostro gap)
     ax = axes[1, 0]
     sns.pointplot(data=df, x="fb", y="gap_final", hue="aggregator", errorbar=("se", 1), dodge=True, ax=ax)
     ax.set_title("Gap spettrale finale vs fb")
     ax.set_xlabel("fb")
-    ax.set_ylabel("(Î»_Kâˆ’Î»_{K+1})/Î»_K")
+    ax.set_ylabel("(λ_K−λ_{K+1})/λ_K")
     ax.grid(True, alpha=0.3)
     ax.legend(title="", bbox_to_anchor=(1.02, 1), loc="upper left")
 
@@ -666,5 +664,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

@@ -1,10 +1,10 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Experiment 03 â€” DP-like Gaussian noise direttamente su J locali
+Experiment 03 — DP-like Gaussian noise direttamente su J locali
 ==============================================================
 Scenario: ogni client costruisce J_l non supervisionata (Hebb dagli esempi locali) e vi aggiunge
-rumore gaussiano simmetrico (DP-like) prima dell'aggregazione sul server. L'obiettivo Ã¨ far sÃ¬ che
+rumore gaussiano simmetrico (DP-like) prima dell'aggregazione sul server. L'obiettivo è far sì che
 il singolo round sia sotto-informato, ma che l'accumulo di round (extend) e la media sui client
 recuperino il segnale.
 
@@ -16,7 +16,7 @@ Output per run:
 Sigle spiegate:
 - FL = Federated Learning (apprendimento federato)
 - TAM = Tripartite Associative Memory
-- DP = Differential Privacy (privacy differenziale) â€” qui simulata come rumore Gaussiano su J
+- DP = Differential Privacy (privacy differenziale) — qui simulata come rumore Gaussiano su J
 - shuffle = stimatore K_eff basato su baseline a permutazione
 """
 
@@ -32,7 +32,7 @@ import time
 import re
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import List, Tuple, cast, Literal
+from typing import List, Tuple
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -42,26 +42,24 @@ from tqdm.auto import tqdm
 # ---------------------------------------------------------------------
 # Import moduli di progetto
 # Nota: questo file risiede in <UNSUP>/stress_tests/, quindi il root del progetto
-# (dove vivono Files come Functions.py, Dynamics.py, Networks.py) Ã¨ il parent
+# (dove vivono Files come Functions.py, Dynamics.py, Networks.py) è il parent
 # immediato della cartella stress_tests. In precedenza si usava parents[2], che
 # puntava una directory troppo in alto (es. .../TAMFed) causando
 # ModuleNotFoundError per 'Functions'. Usiamo quindi parents[1].
 # ---------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parents[1]  # == <UNSUP>
 if str(ROOT) not in sys.path:
-    pass
-SRC = ROOT / 'src'
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
-from src.unsup.functions import (
+    sys.path.insert(0, str(ROOT))
+
+from Functions import (
     gen_patterns,
     JK_real,
     unsupervised_J,
     propagate_J,
     estimate_K_eff_from_J,
 )
-from src.unsup.networks import TAM_Network
-from src.unsup.dynamics import dis_check
+from Networks import TAM_Network
+from Dynamics import dis_check
 
 # ---------------------------------------------------------------------
 # Dataclass iperparametri
@@ -113,7 +111,7 @@ def gen_dataset_unsup(
     L: int,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    """Ritorna ETA di shape (L, n_batch, M_c, N) con distribuzione uniforme su Î¼."""
+    """Ritorna ETA di shape (L, n_batch, M_c, N) con distribuzione uniforme su μ."""
     K, N = xi_true.shape
     M_c = math.ceil(M_total / (L * n_batch))
     p_keep = 0.5 * (1.0 + r_ex)
@@ -291,7 +289,7 @@ def aggregate_and_plot(hp: HyperParams, rows: List[dict], exp_dir: Path) -> None
     # Garantisce che style sia uno dei valori permessi da seaborn.set_theme
     _allowed_styles = {'white', 'dark', 'whitegrid', 'darkgrid', 'ticks'}
     style_use = hp.style if hp.style in _allowed_styles else 'whitegrid'
-    sns.set_theme(style=cast(Literal['white', 'dark', 'whitegrid', 'darkgrid', 'ticks'], style_use), palette=hp.palette)
+    sns.set_theme(style=style_use, palette=hp.palette)
     fig, axes = plt.subplots(3, 1, figsize=(9, 12), constrained_layout=True)
 
     # 1) Retrieval vs round
@@ -309,7 +307,7 @@ def aggregate_and_plot(hp: HyperParams, rows: List[dict], exp_dir: Path) -> None
     ax.plot(rounds, f_mean, label="Frobenius rel.")
     ax.fill_between(rounds, f_mean - f_se, f_mean + f_se, alpha=0.2)
     ax.set_xlabel("round")
-    ax.set_ylabel("||Jâˆ’J*||_F / ||J*||_F")
+    ax.set_ylabel("||J−J*||_F / ||J*||_F")
     ax.set_title("Convergenza strutturale di J (extend)")
     ax.grid(True, alpha=0.3)
 
@@ -322,7 +320,7 @@ def aggregate_and_plot(hp: HyperParams, rows: List[dict], exp_dir: Path) -> None
     ax.set_xlabel("round")
     ax.set_ylabel("K_eff")
     ax2.set_ylabel("sigma_eff")
-    ax.set_title("Rank efficace e intensitÃ  del rumore")
+    ax.set_title("Rank efficace e intensità del rumore")
     ax.grid(True, alpha=0.3)
 
     # legenda combinata
@@ -361,7 +359,7 @@ def main():
     base_dir = ROOT / "stress_tests" / "exp03_dp_noise_on_J"
     # Sanitizzazione della noise_schedule per path Windows-safe
     def slug(s: str) -> str:
-        # minuscole, sostituisce tutto ciÃ² che non Ã¨ alfanumerico con '-'
+        # minuscole, sostituisce tutto ciò che non è alfanumerico con '-'
         s2 = s.lower()
         s2 = re.sub(r"[^a-z0-9]+", "-", s2).strip('-')
         return s2 or "sched"
@@ -391,7 +389,7 @@ def main():
             flog.write(json.dumps(row) + "\n")
             tqdm.write(
                 f"[seed {seed}] m_final={row['m_final']:.3f} "
-                f"fro_final={row['fro_final']:.3f} Î”K={row['deltaK']}"
+                f"fro_final={row['fro_final']:.3f} ΔK={row['deltaK']}"
             )
 
     aggregate_and_plot(hp, rows, exp_dir)
@@ -399,5 +397,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

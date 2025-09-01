@@ -29,7 +29,7 @@ except Exception:
     def tqdm(iterable=None, **kwargs):
         return iterable if iterable is not None else []
 
-import stress_tests.exp_01_partial_archetypes_single as mod
+import experiments.exp_01_partial_archetypes_single as mod
 from dataclasses import asdict
 
 

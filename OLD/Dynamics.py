@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Dynamics.py
 
@@ -44,7 +44,7 @@ except Exception:  # pragma: no cover - fallback
 
 # Import delle funzioni esterne usate da alcune routine (se disponibili)
 try:  # import selettivo per evitare side effects indesiderati
-    from src.unsup.functions import (
+    from Functions import (
         unsupervised_J,
         propagate_J,
         estimate_K_eff_from_J,
@@ -57,7 +57,7 @@ except Exception:  # noqa: E722 - vogliamo solo continuare; funzioni verranno la
     pass
 
 try:
-    from src.unsup.networks import TAM_Network  # Hopfield_Network non usato direttamente qui
+    from Networks import TAM_Network  # Hopfield_Network non usato direttamente qui
 except Exception:  # noqa
     TAM_Network = None  # verrà controllato a runtime quando necessario
 
@@ -271,7 +271,7 @@ def robust_z(values: List[float]) -> List[float]:
 def run_single_experiment(base_params: Dict[str, Any], w_value: float, seed: int) -> Dict[str, Any]:
     """Esegue loop principale ridotto per dato w, seed (versione notebook)."""
     # Lazy import per sicurezza
-    from src.unsup.functions import (
+    from Functions import (
         gen_patterns, JK_real, gen_dataset_unsup, unsupervised_J, propagate_J, estimate_K_eff_from_J
     )
     rng = np.random.default_rng(seed)
@@ -342,12 +342,9 @@ def run_single_experiment(base_params: Dict[str, Any], w_value: float, seed: int
     ξr_first, Magn_first = dis_check(autov0, K, L, J_unsup_first, JKS_first, ξ=ξ_true, updates=up, show_bar=False)
 
     m_first, _, _ = _match_and_overlap(ξr_first, ξ_true)
-    if patterns_extend_final is not None:
-        m_final, overlaps_final, _ = _match_and_overlap(patterns_extend_final, ξ_true)
-    else:
-        m_final, overlaps_final = 0.0, np.array([])
+    m_final, overlaps_final, _ = _match_and_overlap(patterns_extend_final, ξ_true)
     G_ext = m_final - m_first
-    deltaK = _delta_K(K_eff_final if K_eff_final is not None else 0, K)
+    deltaK = _delta_K(K_eff_final, K)
 
     result = {
         'w': w_value,
@@ -356,10 +353,10 @@ def run_single_experiment(base_params: Dict[str, Any], w_value: float, seed: int
         'm_retr_final': m_final,
         'G_ext': G_ext,
         'fro_final': fro_extend_rounds[-1],
-        'fro_AUC': float(float(np.trapz(fro_extend_rounds, dx=1)) / max(1, len(fro_extend_rounds) - 1)),
-        'm_AUC': float(float(np.trapz(magn_extend_rounds, dx=1)) / max(1, len(magn_extend_rounds) - 1)),
+        'fro_AUC': float(np.trapz(fro_extend_rounds, dx=1) / max(1, len(fro_extend_rounds) - 1)),
+        'm_AUC': float(np.trapz(magn_extend_rounds, dx=1) / max(1, len(magn_extend_rounds) - 1)),
         'deltaK': deltaK,
-        'K_eff_final': int(K_eff_final if K_eff_final is not None else 0),
+        'K_eff_final': int(K_eff_final),
         'patterns_final': patterns_extend_final,
         'magn_final_mean': float(np.mean(magn_extend_rounds)),
         'magn_first_mean': float(magn_extend_rounds[0]),
@@ -559,7 +556,7 @@ def refine_grid_search(initial_report: dict,
 _dataset_cache: Dict[int, Tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
 
 def _get_data_for_seed(seed: int, N_b: int, K_b: int, M_unsup_b: int, r_ex_b: float, n_batch_b: int, L_b: int):
-    from src.unsup.functions import gen_patterns, gen_dataset_unsup, JK_real
+    from Functions import gen_patterns, gen_dataset_unsup, JK_real
     if seed in _dataset_cache:
         return _dataset_cache[seed]
     xi_true = gen_patterns(N_b, K_b)
@@ -569,7 +566,7 @@ def _get_data_for_seed(seed: int, N_b: int, K_b: int, M_unsup_b: int, r_ex_b: fl
     return _dataset_cache[seed]
 
 def _mean_unsup_J_per_layer(tensor_L_M_N: np.ndarray, K: int):
-    from src.unsup.functions import unsupervised_J
+    from Functions import unsupervised_J
     L_loc, M_eff_actual, N_loc = tensor_L_M_N.shape
     M_eff_param = max(1, M_eff_actual // K)
     Js = [unsupervised_J(tensor_L_M_N[l], M_eff_param) for l in range(L_loc)]
@@ -581,7 +578,7 @@ def timed_partial_run(w_value: float, seed: int, rounds: int, *,
                       updates_b: int, show_detail: bool = False) -> Dict[str, Any]:
     """Esegue un sotto-run temporizzato (dal notebook benchmark)."""
     import time
-    from src.unsup.functions import unsupervised_J, propagate_J
+    from Functions import unsupervised_J, propagate_J
     xi_true, ETA_unsup_loc, J_star_loc = _get_data_for_seed(seed, N_b, K_b, M_unsup_b, r_ex_b, n_batch_b, L_b)
     timings = { 'round': [], 't_unsup_single': [], 't_unsup_extend': [], 't_hebb_prev': [], 't_blend': [],
                 't_propagate': [], 't_disentangle': [], 't_total_round': [] }

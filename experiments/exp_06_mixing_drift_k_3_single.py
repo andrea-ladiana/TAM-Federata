@@ -34,13 +34,13 @@ while ROOT != ROOT.parent and not (ROOT / "Functions.py").exists():
 SRC = ROOT / 'src'
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
-from unsup.functions import (
+from src.unsup.functions import (
     gen_patterns,
     JK_real,
     unsupervised_J,
     propagate_J,
 )
-from unsup.dynamics import dis_check
+from src.unsup.dynamics import dis_check
 
 
 @dataclass
@@ -226,7 +226,7 @@ def run_one_seed(hp: HyperParams, seed: int, out_dir: Path) -> Dict:
         vals, vecs = np.linalg.eig(JKS_iter)
         mask = (np.real(vals) > 0.5)
         autov = np.real(vecs[:, mask]).T
-        xi_hat, m_per = dis_check(autov, hp.K, hp.L, J_rec, JKS_iter, xi=xi_true, updates=hp.updates, show_bar=False)
+        xi_hat, m_per = dis_check(autov, hp.K, hp.L, J_rec, JKS_iter, ξ=xi_true, updates=hp.updates, show_bar=False)
         xi_ref = xi_hat
 
         # Serie

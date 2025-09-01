@@ -1,7 +1,7 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Experiment 04.1 â€” Overhead di quantizzazione vs 1-bit (compute & comunicazione)
+Experiment 04.1 — Overhead di quantizzazione vs 1-bit (compute & comunicazione)
 ==============================================================================
 Mostra l'overhead **computazionale** e **di comunicazione** all'ultimo round quando si usa una
 quantizzazione a b bit, rispetto alla baseline **1-bit** (sign) sulle matrici locali J_l.
@@ -15,7 +15,7 @@ Uscite:
 - hyperparams.json
 - log.jsonl (una riga per seed e bitwidth con tempi medi per round)
 - results_table.csv
-- fig_overhead.png (Seaborn, 2Ã—2: overhead compute (solo encoding), overhead compute (pipeline client),
+- fig_overhead.png (Seaborn, 2×2: overhead compute (solo encoding), overhead compute (pipeline client),
   overhead comunicazione relativo, e MB/round assoluti)
 
 Note:
@@ -46,11 +46,9 @@ from tqdm.auto import tqdm
 # ---------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
-    pass
-SRC = ROOT / 'src'
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
-from src.unsup.functions import (
+    sys.path.insert(0, str(ROOT))
+
+from Functions import (
     gen_patterns,
     JK_real,
     unsupervised_J,
@@ -235,9 +233,9 @@ def aggregate_and_plot(hp: HyperParams, rows: List[dict], out_dir: Path) -> None
         pipe=("pipeline_time_per_client_round", "mean"),
         comm=("comm_bits_per_round", "mean"),
     )
-    base_enc = float(base.at[1, "enc"]) if 1 in base.index else np.nan
-    base_pipe = float(base.at[1, "pipe"]) if 1 in base.index else np.nan
-    base_comm = float(base.at[1, "comm"]) if 1 in base.index else np.nan
+    base_enc = float(base.loc[1, "enc"]) if 1 in base.index else np.nan
+    base_pipe = float(base.loc[1, "pipe"]) if 1 in base.index else np.nan
+    base_comm = float(base.loc[1, "comm"]) if 1 in base.index else np.nan
 
     # colonne di overhead relativo
     df["oh_enc_rel"] = df["enc_time_per_client_round"] / base_enc
@@ -255,7 +253,7 @@ def aggregate_and_plot(hp: HyperParams, rows: List[dict], out_dir: Path) -> None
     ax.axhline(1.0, color="tab:gray", linestyle=":", linewidth=1.2)
     ax.set_title("Overhead compute (encoding) vs 1-bit")
     ax.set_xlabel("bit di quantizzazione")
-    ax.set_ylabel("tempo relativo (Ã— baseline 1-bit)")
+    ax.set_ylabel("tempo relativo (× baseline 1-bit)")
     ax.grid(True, alpha=0.3)
 
     # 2) Overhead compute (pipeline client)
@@ -264,23 +262,23 @@ def aggregate_and_plot(hp: HyperParams, rows: List[dict], out_dir: Path) -> None
     ax.axhline(1.0, color="tab:gray", linestyle=":", linewidth=1.2)
     ax.set_title("Overhead compute (pipeline client) vs 1-bit")
     ax.set_xlabel("bit")
-    ax.set_ylabel("tempo relativo (Ã— baseline 1-bit)")
+    ax.set_ylabel("tempo relativo (× baseline 1-bit)")
     ax.grid(True, alpha=0.3)
 
     # 3) Overhead comunicazione (relativo)
     ax = axes[1, 0]
-    # comunicazione Ã¨ deterministica per bit â†’ raggruppo
-    df_comm = df.groupby("bits", as_index=False)[["oh_comm_rel"]].mean()
+    # comunicazione è deterministica per bit → raggruppo
+    df_comm = df.groupby("bits", as_index=False)["oh_comm_rel"].mean()
     sns.pointplot(data=df_comm, x="bits", y="oh_comm_rel", dodge=False, ax=ax)
     ax.axhline(1.0, color="tab:gray", linestyle=":", linewidth=1.2)
     ax.set_title("Overhead comunicazione vs 1-bit")
     ax.set_xlabel("bit")
-    ax.set_ylabel("bit trasmessi (Ã— baseline 1-bit)")
+    ax.set_ylabel("bit trasmessi (× baseline 1-bit)")
     ax.grid(True, alpha=0.3)
 
     # 4) Payload assoluto (MB/round)
     ax = axes[1, 1]
-    df_mb = df.groupby("bits", as_index=False)[["comm_bits_per_round"]].mean()
+    df_mb = df.groupby("bits", as_index=False)["comm_bits_per_round"].mean()
     df_mb["MB_per_round"] = df_mb["comm_bits_per_round"] / 8.0 / 1e6
     sns.pointplot(data=df_mb, x="bits", y="MB_per_round", dodge=False, ax=ax)
     ax.set_title("Payload per round (MB)")
@@ -350,4 +348,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
