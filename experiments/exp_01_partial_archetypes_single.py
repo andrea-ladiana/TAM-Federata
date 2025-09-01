@@ -44,21 +44,32 @@ except Exception:
 
 # Import locali di progetto
 _THIS = Path(__file__).resolve()
-ROOT = _THIS
-while ROOT != ROOT.parent and not (ROOT / "Functions.py").exists():
+# Robust project root detection: go up until we find a 'src/unsup' package directory.
+ROOT = _THIS.parent  # start from experiments/
+for _ in range(8):  # limit ascent to avoid infinite loops
+    candidate = ROOT / 'src' / 'unsup' / '__init__.py'
+    if candidate.exists():
+        break
+    if ROOT == ROOT.parent:
+        break
     ROOT = ROOT.parent
+else:
+    pass  # loop exhausted (handled below)
 
 SRC = ROOT / 'src'
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
-from unsup.functions import (  # type: ignore
+if not (SRC / 'unsup' / '__init__.py').exists():
+    raise RuntimeError(f"Impossibile trovare il package 'src/unsup' a partire da {__file__}. Verificare la struttura del progetto.")
+# Per import "from src.unsup..." devo avere in sys.path la directory che CONTIENE 'src', cioè ROOT.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from src.unsup.functions import (  # type: ignore
     gen_patterns,
     JK_real,
     unsupervised_J,
     propagate_J,
     estimate_K_eff_from_J,
 )
-from unsup.dynamics import dis_check  # type: ignore
+from src.unsup.dynamics import dis_check  # type: ignore
 
 
 # ---------------------------------------------------------------------
@@ -82,6 +93,8 @@ class HyperParams:
     seed_base: int = 123
     pb_seeds: bool = True
     use_mp_keff: bool = True
+    pb_dataset: bool = True  # progress bar per generazione dataset
+    pb_rounds: bool = True   # progress bar per loop round per seed
 
 
 # ---------------------------------------------------------------------
@@ -112,6 +125,7 @@ def gen_dataset_partial_archetypes(
     L: int,
     client_subsets: List[List[int]],
     rng: np.random.Generator,
+    use_tqdm: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Ritorna ETA (L, n_batch, M_c, N) e labels (L, n_batch, M_c)."""
     K, N = xi_true.shape
@@ -119,9 +133,15 @@ def gen_dataset_partial_archetypes(
     ETA = np.zeros((L, n_batch, M_c, N), dtype=np.float32)
     labels = np.zeros((L, n_batch, M_c), dtype=np.int32)
     p_keep = 0.5 * (1.0 + r_ex)
-    for l in range(L):
+    iter_L = range(L)
+    if use_tqdm:
+        iter_L = tqdm(iter_L, desc="dataset: client", leave=False)
+    for l in iter_L:
         allowed = client_subsets[l]
-        for t in range(n_batch):
+        iter_T = range(n_batch)
+        if use_tqdm:
+            iter_T = tqdm(iter_T, desc=f"client {l} batches", leave=False)
+        for t in iter_T:
             mus = rng.choice(allowed, size=M_c, replace=True)
             probs = rng.uniform(size=(M_c, N))
             chi = np.where(probs <= p_keep, 1.0, -1.0)
@@ -140,7 +160,9 @@ def run_one_seed_single(hp: HyperParams, seed: int) -> Dict[str, Any]:
     xi_true = gen_patterns(N, K)
     J_star = JK_real(xi_true)
     subsets = make_client_subsets(K, L, hp.K_per_client, rng)
-    ETA, labels = gen_dataset_partial_archetypes(xi_true, hp.M_total, hp.r_ex, hp.n_batch, L, subsets, rng)
+    ETA, labels = gen_dataset_partial_archetypes(
+        xi_true, hp.M_total, hp.r_ex, hp.n_batch, L, subsets, rng, use_tqdm=hp.pb_dataset
+    )
 
     fro_series: List[float] = []
     m_series: List[float] = []
@@ -149,7 +171,10 @@ def run_one_seed_single(hp: HyperParams, seed: int) -> Dict[str, Any]:
     xi_ref = None
     K_eff_final = None
 
-    for t in range(hp.n_batch):
+    round_iter = range(hp.n_batch)
+    if hp.pb_rounds:
+        round_iter = tqdm(round_iter, desc=f"rounds seed {seed}", leave=False)
+    for t in round_iter:
         # Round corrente ONLY
         ETA_round = ETA[:, t, :, :]  # (L, M_c, N)
         L_loc, M_eff, N_loc = ETA_round.shape
@@ -166,7 +191,7 @@ def run_one_seed_single(hp: HyperParams, seed: int) -> Dict[str, Any]:
         vals, vecs = np.linalg.eig(JKS_iter)
         mask = (np.real(vals) > 0.5)
         autov = np.real(vecs[:, mask]).T
-        xi_hat, Magn = dis_check(autov, K, L, J_rec, JKS_iter, xi=xi_true, updates=hp.updates, show_bar=False)
+        xi_hat, Magn = dis_check(autov, K, L, J_rec, JKS_iter, ξ=xi_true, updates=hp.updates, show_bar=False)
         xi_ref = xi_hat
 
         fro_series.append(float(np.linalg.norm(JKS_iter - J_star, ord='fro') / (np.linalg.norm(J_star, ord='fro') + 1e-9)))
@@ -195,7 +220,7 @@ def run_one_seed_single(hp: HyperParams, seed: int) -> Dict[str, Any]:
     vals0, vecs0 = np.linalg.eig(JKS_first)
     mask0 = (np.real(vals0) > 0.5)
     autov0 = np.real(vecs0[:, mask0]).T
-    xi_first, Magn_first = dis_check(autov0, K, L, J_unsup_first, JKS_first, xi=xi_true, updates=hp.updates, show_bar=False)
+    xi_first, Magn_first = dis_check(autov0, K, L, J_unsup_first, JKS_first, ξ=xi_true, updates=hp.updates, show_bar=False)
 
     def _match_and_overlap(estimated: np.ndarray, true: np.ndarray) -> float:
         from scipy.optimize import linear_sum_assignment
