@@ -1,0 +1,6 @@
+numpy>=1.23
+scipy>=1.9
+matplotlib>=3.6
+seaborn>=0.12
+tqdm>=4.64
+# tensorflow is optional; NumPy backend is used when TF is absent
