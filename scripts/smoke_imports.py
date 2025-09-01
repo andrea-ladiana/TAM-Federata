@@ -8,7 +8,7 @@ if str(ROOT) not in sys.path:
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-import unsup  # noqa: F401
+import src.unsup  # noqa: F401
 
 def check(module):
     try:

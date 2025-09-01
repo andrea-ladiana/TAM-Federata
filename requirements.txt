@@ -3,4 +3,4 @@ scipy>=1.9
 matplotlib>=3.6
 seaborn>=0.12
 tqdm>=4.64
-# tensorflow is optional; NumPy backend is used when TF is absent
+# tensorflow non è più necessario: MNIST viene scaricato via urllib (vedi exp_08)

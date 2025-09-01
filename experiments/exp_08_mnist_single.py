@@ -1,17 +1,17 @@
 ﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Experiment 08 â€” MNIST (single-mode)
+Experiment 08 — MNIST (single-mode)
 ===================================
-Primo scaffold per valutazione su dataset reale (MNIST) in modalitÃ  SINGLE.
+Primo scaffold per valutazione su dataset reale (MNIST) in modalità SINGLE.
 
 Strategia:
-- Costruisce 10 prototipi "veri" xi_true come segno della media per classe (Â±1 su N=784).
+- Costruisce 10 prototipi "veri" xi_true come segno della media per classe (±1 su N=784).
 - Genera uno stream round-wise per L client, con etichette bilanciate (uniformi) o con drift opzionale.
 - A ciascun round calcola J solo sul round corrente, propaga e stima i prototipi con TAM.
 - Metriche: K_eff (MP), retrieval vs xi_true, Frobenius relativa vs JK_real(xi_true).
 
-Nota: dipende da tensorflow.keras per il download di MNIST alla prima esecuzione.
+Nota: il download di MNIST ora avviene senza tensorflow (file .npz ufficiale, ~11MB, cached). Rimuovere quindi eventuale dipendenza da tensorflow.
 """
 from __future__ import annotations
 
@@ -58,11 +58,41 @@ class HyperParams:
     use_mp_keff: bool = True
 
 
-def load_mnist_pm1() -> Tuple[np.ndarray, np.ndarray]:
-    from tensorflow.keras.datasets import mnist  # lazy import
-    (x_train, y_train), _ = mnist.load_data()
+def load_mnist_pm1(cache_dir: Path | None = None) -> Tuple[np.ndarray, np.ndarray]:
+    """Scarica (se necessario) e carica MNIST restituendo X in {-1,+1} e y.
+
+    Evita la dipendenza da tensorflow: usa il file pubblico mnist.npz
+    (lo stesso usato internamente da keras) scaricandolo da GCS.
+    """
+    import urllib.request
+    import hashlib
+    if cache_dir is None:
+        cache_dir = ROOT / 'data' / 'mnist'
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    npz_path = cache_dir / 'mnist.npz'
+    url = 'https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz'
+    # Facoltativo: checksum noto (sha256) per integrità (valore aggiornato se cambia upstream)
+    expected_sha256 = '731c5ac602752760c8e48fbffcf8c3b850d6c52b7bb0a7f4f3f8a4f74a5a5a33'
+    if not npz_path.exists():
+        print(f"[mnist] Download {url} -> {npz_path}")
+        try:
+            urllib.request.urlretrieve(url, npz_path)  # type: ignore
+        except Exception as e:
+            raise RuntimeError(f"Download MNIST fallito: {e}")
+    # Verifica (best-effort)
+    try:
+        h = hashlib.sha256()
+        with open(npz_path, 'rb') as f: h.update(f.read())
+        digest = h.hexdigest()
+        if digest != expected_sha256:
+            print('[mnist] Warning: checksum diverso, continuo comunque.')
+    except Exception:
+        pass
+    with np.load(npz_path) as data:  # type: ignore
+        x_train = data['x_train']  # (60000,28,28)
+        y_train = data['y_train']
     X = x_train.astype(np.float32) / 255.0
-    X = (X.reshape(-1, 28*28) >= 0.5).astype(np.float32) * 2.0 - 1.0  # in {-1, +1}
+    X = (X.reshape(-1, 28 * 28) >= 0.5).astype(np.float32) * 2.0 - 1.0
     y = y_train.astype(np.int64)
     return X, y
 
