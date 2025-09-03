@@ -81,9 +81,9 @@ class HyperParams:
     K: int = 6
     N: int = 100
     n_batch: int = 10
-    M_total: int = 200
+    M_total: int = 600
     r_ex: float = 0.6
-    K_per_client: int = 3
+    K_per_client: int = 2
     updates: int = 60
     beta_T: float = 2.5
     lam: float = 0.2

@@ -1,0 +1,26 @@
+Vorrei ragionare meglio sull'esperimento 01. Voglio, da esperto mondiale di programmazione, di meccanica statistica e di federated learning, che tu mi dia una mano. 
+
+Il setting generale è questo: i client vengono forniti, durante tutto il ciclo di allenamento, nei diversi round di archetipi o categorie differenti. Comincia a pensare ad esempio al legame con altri setting nel FL simili (vedi ad esempio il legame con il horizontal/vertical/mixed FL), in cui le categorie, o colonne dei dataset sono differenti.
+
+In questo senso appunto gli archetipi dei diversi client (scelti in modo tale che l'unione delle coverage parziale sia in ogni caso totale, i.e. deve essere un ricoprimento non necessariamente disgiunto) fungono da categorie. L'obiettivo della rete, nel susseguirsi dei round, attraverso la procedura di aggregazione delle matrici Hebbiane e la distillazione successiva degli archetipi approssimati attraverso il disentanglement, dovrebbe essere quello di ricostruire una matrice "generale" hebbiana, che sia capace poi (incastonata in una dinamica di Hopfield), di recuperare qualsiasi tipo di pattern dei diversi client. In un certo senso quindi quello che voglio andare a misurare è inizialmente la distanza tra la matrice del server, nei diversi round, e la matrice hebbiana con tutti gli archetipi. Questa distanza, in norma di Frobenius, dovrebbe misurare la capacità di generalizzazione della rete e della procedura.
+
+Questa secondo me è la metrica maestra, a cui però se ne possono addizionare delle altre.
+
+Sicuramente vedere anche come si evolve la stima del K_eff, sia con metodo shuffle che con metodo Marchenko-Pastur potrebbe essere interessante.
+
+Un'altra cosa che mi aspetterei di vedere è questa: se il coverage parziale degli archetipo non è disgiunto, ossia se ci sono alcuni client che hanno lo stesso archetipo, mi aspetterei che gli archetipi più visionati abbiano un miglior retrieval rispetto agli altri. Questi infatti dovrebbero aver visionato più esempi e dovrebbero aver la capacità di generalizzare meglio, rispetto agli archetipi visti solo una volta.
+Questo si potrebbe visionare in un esperimento in un regime molto data-scarce in cui, una volta estratta la matrice finale del server ed usata per una dinamica di una rete di Hopfield -con stesso numero di neuroni, dovrebbe esserci una differenza nelle performance di retrieval degli arch più visti e quelli meno visti.
+In pratica: dinamica completa FL -> estraggo matrice server finale -> la uso per inizializzare le sinapsi di una rete di Hopfield -> stato iniziale di Hopfield come esempio fortemente corrotto dell'archetipo -> retrieval dell'archetipo tramite dinamica MC di Hopfield (dinamica a la Glauber classica, se hai dubbi sulla implementazione, chiedimi pure).
+In questo modo, una volta estratta questa matrice J hebbiana finale e calcolata la magnetizzazione finale su molti esperimenti, dovrei vedere un miglioramento della magn media sugli archetipi più visionati. Questo è quello che potrebbe essere interessante vedere e dimostrare (magari statisticamente, ma non so bene come).
+
+Non so bene come veniva calcolato prima la magnetizzazione, ma sono sicuro che la procedura che ti ho descritto adesso sia corretta concettualmente, perciò usa questa.
+
+Sarebbe interessante fare uno studio di sensitività rispetto ai parametri (subset size, noise level, blending weight o propagation steps).
+
+Vorrei sapere cosa ne pensi di questo esperimento e se potesse essere avvalorato da altre simulazioni o da un framework matematico più ricco. Vorrei che si ponesse bene in un contesto di learning federato e che possa dare dei risultati non totalmente scontati.
+
+Un altro aspetto interessante potrebbe vedere come si comporti su dataset reali e strutturati. Pensavo di vedere ad esempio questo esperimento sul MNIST:
+prendo (ad esempio tre client L=3) e considero il dataset di training. Al primo client do le cifre 1,2,3 al secondo client le cifre 4,5,6, al terzo client le cifre 7,8,9 (lo zero rimane fuori). 
+In teoria, se l'aggregazione a livello server non funzionasse, la rete non sarebbe in grado di generalizzare. Se invece questo esperimento dovesse funzionare, mediante la matrice hebbiana aggregata del server finale, con una dinamica di Hopfield (come quella spiegata prima), una rete dovrebbe essere in grado di riconoscere tutti gli archetipi, a partire dagli esempi. In questo modo si darebbe una chiara prova su dataset strutturati (ed estendere lo studio dopo al FMNIST e al dataset Olivetti).
+
+Dimmi cosa ne pensi, come si potrebbe spiegare in maniera ottimale questo esperimento, come arricchire le simulazioni o variare quelle già fatte (cambiare soprattutto il grafico con la magnetizzazione). Non voglio ancora delle implementazioni a livello di codice, voglio che mi fai un resoconto completo.
