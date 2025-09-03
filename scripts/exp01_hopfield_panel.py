@@ -7,7 +7,7 @@ from typing import Dict, Any
 from src.unsup.config import HyperParams
 from src.unsup.runner_single import run_exp01_single
 
-hp = HyperParams(K=9, L=3, N=300, n_batch=24, M_total=2400, r_ex=0.85, K_per_client=3, w=0.4)
+hp = HyperParams(K=9, L=3, N=300, n_batch=24, M_total=2400, r_ex=0.85, K_per_client=3, w=0.8)
 
 res: Dict[str, Any] = run_exp01_single(hp, out_dir=None, do_plot=False)
 seed_idx = 0
@@ -31,5 +31,5 @@ plt.xlabel("# esposizioni per archetipo")
 plt.ylabel("magnetizzazione media (Hopfield)")
 plt.title(f"corr: pearson={out['pearson']:.3f} spearman={out['spearman']:.3f}")
 plt.tight_layout()
-plt.savefig("out/synth_baseline/hopfield_exposure_scatter.png", dpi=150)
+plt.savefig("out_01/synth_baseline/hopfield_exposure_scatter.png", dpi=150)
 plt.close()

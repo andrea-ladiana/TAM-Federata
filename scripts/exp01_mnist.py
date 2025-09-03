@@ -10,7 +10,7 @@ from src.unsup.single_round import single_round_step, RoundLog
 from src.unsup.metrics import retrieval_mean_hungarian, frobenius_relative
 from src.unsup.functions import JK_real
 
-OUT = Path("out/mnist_single"); OUT.mkdir(parents=True, exist_ok=True)
+OUT = Path("out_01/mnist_single"); OUT.mkdir(parents=True, exist_ok=True)
 
 # --- setup MNIST HFL: client1 {1,2,3}, client2 {4,5,6}, client3 {7,8,9} (zero escluso) ---
 groups = [[1,2,3],[4,5,6],[7,8,9]]
@@ -24,7 +24,7 @@ hp = HyperParams(mode="single",
                  M_total=3*12*200,                 # ~200 esempi/client/round
                  r_ex=1.0,                         # non usato qui: immagini reali
                  K_per_client=3,
-                 w=0.4,
+                 w=0.8,
                  n_seeds=1, seed_base=2025,
                  use_tqdm=True)
 

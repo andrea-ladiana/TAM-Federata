@@ -19,7 +19,7 @@ class AggregateDict(TypedDict):
     coverage_se: List[float]
 
 def main() -> None:
-    root = Path("out/synth_sweep"); root.mkdir(parents=True, exist_ok=True)
+    root = Path("out_01/synth_sweep"); root.mkdir(parents=True, exist_ok=True)
 
     # Regimi che coprono lo span:
     Ks_per_client = [3, 4, 5, 6]        # da disgiunto → forte overlap
