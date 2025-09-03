@@ -76,7 +76,7 @@ def single_round_step(
     J_KS = np.asarray(propagate_J(J_rec, J_real=-1, verbose=False, iters=hp.prop.iters), dtype=np.float32)
 
     # 4) cut spettrale
-    V, _ = spectral_cut(J_KS, tau=hp.spec.tau)
+    V, *_ = spectral_cut(J_KS, tau=hp.spec.tau)
 
     # 5) disentangling + magnetizzazioni (robusto con fallback interno)
     xi_r, _m_vec = dis_check(

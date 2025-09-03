@@ -155,6 +155,8 @@ def run_exp01_single(
         J_star = np.asarray(JK_real(xi_true), dtype=np.float32)
 
         # 3) subset per client
+        if hp.K_per_client is None:
+            raise ValueError("K_per_client must be specified for partial coverage datasets.")
         subsets = make_client_subsets(K=hp.K, L=hp.L, K_per_client=hp.K_per_client, rng=rng)
 
         # 4) dataset SINGLE
@@ -187,7 +189,7 @@ def run_exp01_single(
             J_KS = np.asarray(propagate_J(J_rec, J_real=-1, verbose=False, iters=hp.prop.iters), dtype=np.float32)
 
             # Cut spettrale & Keff (coerente con SINGLE ⇒ MP usa M_eff del round)
-            V, _k_from_cut = spectral_cut(J_KS, tau=hp.spec.tau)
+            V, _k_from_cut, *_ = spectral_cut(J_KS, tau=hp.spec.tau)
             if hp.estimate_keff_method == "mp":
                 K_eff, _, _ = estimate_keff(J_KS, method="mp", M_eff=M_eff)
             else:
