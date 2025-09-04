@@ -1,0 +1,29 @@
+{
+  "created_at": "2025-09-04 10:48:54",
+  "params": {
+    "beta": 4,
+    "updates": 100,
+    "reps_per_archetype": 100,
+    "start_overlap": 0.7,
+    "stochastic": true,
+    "force_run": true
+  },
+  "shapes": {
+    "J_server": [
+      300,
+      300
+    ],
+    "xi_true": [
+      9,
+      300
+    ],
+    "sigma0": [
+      900,
+      300
+    ],
+    "sigmaf": [
+      900,
+      300
+    ]
+  }
+}

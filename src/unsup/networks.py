@@ -33,27 +33,47 @@ class Hopfield_Network:
         self.K = η.shape[0]
         self.J = tf.einsum('ai,aj->ij', η, η) / self.N
 
-    def dynamics(self, σ0, β, updates, mode="parallel"):
+    def dynamics(self, σ0, β, updates, mode="parallel", stochastic: bool = True, rng=None):
+        """Classic Hopfield dynamics.
+
+        Two variants:
+          - deterministic: synchronous updates σ <- sign(J σ)
+          - stochastic (default): probabilistic parallel Glauber step using tanh(β h).
+
+        Parameters
+        ----------
+        σ0 : (M, N) initial states
+        β : inverse temperature (effective only if stochastic=True)
+        updates : number of update sweeps
+        mode : 'parallel' | 'serial'
+        stochastic : if True use probabilistic updates with probabilities (1 + tanh(β h))/2
+        rng : optional np.random.Generator
+        """
         assert self.N is not None, "Call prepare first"
+        rng = np.random.default_rng() if rng is None else rng
         N = self.N
         M = σ0.shape[0]
         J = self.J
         σ = tf.convert_to_tensor(σ0, dtype=np.float32)
-
-        if mode == "parallel":
-            for _ in range(updates):
-                h = tf.einsum('ij,Aj->Ai', J, σ)
-                noise = np.random.uniform(-1, 1, size=(M, N))
-                self.σ = tf.sign(tf.tanh(β * h) + noise)
-                σ = self.σ
-        else:  # serial
-            for _ in range(updates):
-                idx = np.random.randint(0, N)
-                h = tf.einsum('ij,Aj->Ai', J, σ)
-                noise = np.random.uniform(-1, 1, size=(M, N))
-                signal = tf.tanh(β * h) + noise
-                σ[:, idx] = tf.sign(signal[:, idx])
-                self.σ = σ
+        for _ in range(updates):
+            h = tf.einsum('ij,Aj->Ai', J, σ)
+            if mode == "parallel":
+                if stochastic:
+                    # Probabilities via Glauber dynamics
+                    p = (1.0 + np.tanh(β * h)) * 0.5
+                    σ = (rng.random(size=(M, N)) < p).astype(np.float32)
+                    σ = 2 * σ - 1  # map {0,1} -> {-1, +1}
+                else:
+                    σ = tf.sign(h)
+            else:  # serial Glauber
+                idx = rng.integers(0, N)
+                if stochastic:
+                    p = (1.0 + np.tanh(β * h[:, idx])) * 0.5
+                    flip = (rng.random(size=(M,)) < p).astype(np.float32)
+                    σ[:, idx] = 2 * flip - 1
+                else:
+                    σ[:, idx] = tf.sign(h[:, idx])
+            self.σ = σ
 
 
 class TAM_Network:

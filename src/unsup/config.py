@@ -27,7 +27,7 @@ class TAMParams:
     beta_T: float = 2.5
     lam: float = 0.2
     h_in: float = 0.1
-    updates: int = 80
+    updates: int = 20
     # noise/annealing: i default devono combaciare con TAM_Network
     noise_scale: float = 0.3
     min_scale: float = 0.02
@@ -78,7 +78,7 @@ class HyperParams:
     spec: SpectralParams = field(default_factory=SpectralParams)
 
     # --- varie utilità/flags ---
-    estimate_keff_method: Literal["shuffle", "mp"] = "mp"
+    estimate_keff_method: Literal["shuffle", "mp"] = "shuffle"
     ema_alpha: float = 0.0  # 0.0 = off (EMA su J_unsup se si vuole smussare il rumore)
 
     def __post_init__(self):

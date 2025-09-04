@@ -1,0 +1,35 @@
+{
+  "L": 3,
+  "K": 9,
+  "N": 300,
+  "n_batch": 12,
+  "M_total": 600,
+  "r_ex": 0.8,
+  "K_per_client": 3,
+  "w": 0.8,
+  "mode": "single",
+  "n_seeds": 1,
+  "seed_base": 2025,
+  "use_tqdm": true,
+  "tam": {
+    "beta_T": 2.5,
+    "lam": 0.2,
+    "h_in": 0.1,
+    "updates": 80,
+    "noise_scale": 0.3,
+    "min_scale": 0.02,
+    "anneal": true,
+    "schedule": "linear"
+  },
+  "prop": {
+    "iters": 200,
+    "eps": 0.01
+  },
+  "spec": {
+    "tau": 0.5,
+    "rho": 0.6,
+    "qthr": 0.4
+  },
+  "estimate_keff_method": "shuffle",
+  "ema_alpha": 0.0
+}

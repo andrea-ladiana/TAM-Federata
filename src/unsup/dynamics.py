@@ -111,7 +111,10 @@ def init_candidates_from_eigs(V: np.ndarray, L: int, s: int | None = None, rng: 
 
     rng = np.random.default_rng() if rng is None else rng
     W = rng.normal(0.0, 1.0, size=(s, K_eff))  # (s, K_eff)
-    Z = (V @ W.T).T  # (s, N)
+    # Correct multiplication: mix weights W (s, K_eff) with eigenvectors V (K_eff, N)
+    # to obtain Z of shape (s, N). Previous code used (V @ W.T).T which requires
+    # N == K_eff and caused a ValueError when they differ.
+    Z = W @ V  # (s, N)
     sigma0 = np.where(Z >= 0.0, 1, -1).astype(int)
     return sigma0
 

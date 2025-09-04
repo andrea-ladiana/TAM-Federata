@@ -65,38 +65,84 @@ def Hebb_J(η):
 ################# PSEUDO INV ###########################
 ########################################################
 
-def propagate_J(J, J_real=-1, verbose=True, stop_t=0, iters=20, max_steps: int | None = None):
+def propagate_J(J, J_real=-1, verbose=True, stop_t=0, iters=20, max_steps: int | None = None, eps: float | None = None, tol: float = 1e-8):
     """Iterative propagation (pseudo-inverse like refinement).
 
-    Parameters
-    ----------
-    J : array
-        Initial matrix.
-    J_real : array or -1
-        If provided (not -1) used only for optional progress norm logging.
-    verbose : bool
-        Show tqdm progress.
-    stop_t : float (legacy)
-        If >0 overrides iters: number of micro steps = stop_t/eps.
-    iters : int (legacy semantics)
-        Logical iterations converted to micro steps via division by eps.
-    max_steps : int | None
-        Hard cap on number of micro steps (after translation) to allow quick approximate propagation.
+    Notes
+    -----
+    - `iters` is treated as the (maximum) number of iterations.
+    - `eps` controls the step-size; if not provided we default to 1e-2 which matches
+      the `PropagationParams.eps` default in the config.
+    - The old behaviour divided `iters` by a small eps which could produce very
+      large numbers of micro-steps; that produced extremely long runs. This
+      implementation uses `iters` directly and a safe default for `eps`.
     """
-    eps = 0.001
+    # choose sensible defaults
+    local_eps = eps if eps is not None else 1e-2
+
     if stop_t > 0:
-        nupdates = int(stop_t / eps)
+        # legacy: translate continuous time stop_t into micro-steps if requested
+        nupdates = int(stop_t / local_eps)
     else:
-        nupdates = int(iters / eps)
+        # Treat `iters` as the number of iterations (safe and predictable).
+        nupdates = int(max(1, iters))
+
+    # hard cap to avoid pathological long runs
+    HARD_CAP = 20000
+    nupdates = min(nupdates, HARD_CAP)
     if max_steps is not None:
         nupdates = min(nupdates, max_steps)
-    Jf = np.copy(J)
+
+    # use float64 internally for numerical stability
+    Jf = np.array(J, dtype=np.float64, copy=True)
     disable = not verbose
+
     for l in tqdm(range(0, nupdates + 1), disable=disable):
-        Jf += eps / (1 + eps * l) * (Jf - tf.einsum('ik,kj->ij', Jf, Jf))
+        # step-size schedule similar to original implementation
+        step = local_eps / (1 + local_eps * l)
+
+        # Use fast matmul instead of einsum for performance. Guard against
+        # numerical blow-up by backing off the step-size up to a few times if
+        # the tentative update produces non-finite or excessively large values.
+        attempts = 0
+        max_backoffs = 6
+        cur_step = step
+        while True:
+            update = cur_step * (Jf - (Jf @ Jf))
+            Jf_new = Jf + update
+            # check for numerical issues or runaway norms
+            if np.isfinite(Jf_new).all() and np.linalg.norm(Jf_new, ord='fro') < 1e12:
+                Jf = Jf_new
+                break
+            else:
+                attempts += 1
+                cur_step = cur_step * 0.5
+                if attempts >= max_backoffs or cur_step < 1e-16:
+                    # give up this update and zero it to avoid NaNs
+                    update = np.zeros_like(Jf)
+                    break
+
+        # optional progress/logging
         if np.mean(J_real) != -1 and l % 1000 == 0:
-            print(np.linalg.norm(J_real - Jf, ord='fro'))
-    return Jf
+            try:
+                print(np.linalg.norm(J_real - Jf, ord='fro'))
+            except Exception:
+                pass
+
+        # stop on NaNs/Infs (numerical blow-up) -- should be prevented above
+        if not np.isfinite(Jf).all():
+            Jf[np.logical_not(np.isfinite(Jf))] = 0.0
+            break
+
+        # relative early stopping: update small relative to matrix norm
+        denom = np.linalg.norm(Jf, ord='fro')
+        if denom <= 1e-12:
+            denom = 1.0
+        if np.linalg.norm(update, ord='fro') / denom < tol:
+            break
+
+    # cast back to original dtype if input was float32
+    return Jf.astype(J.dtype) if hasattr(J, 'dtype') else Jf
 
 
 def dreaming_t(ξ, t):

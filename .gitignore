@@ -21,6 +21,7 @@ dist/
 # Data / results
 results/
 risultati/
+logs/
 experiments/**/log.jsonl
 experiments/**/hyperparams.json
 experiments/**/results_table.csv
