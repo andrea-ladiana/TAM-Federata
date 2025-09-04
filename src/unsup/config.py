@@ -27,7 +27,7 @@ class TAMParams:
     beta_T: float = 2.5
     lam: float = 0.2
     h_in: float = 0.1
-    updates: int = 20
+    updates: int = 50
     # noise/annealing: i default devono combaciare con TAM_Network
     noise_scale: float = 0.3
     min_scale: float = 0.02
@@ -71,6 +71,8 @@ class HyperParams:
     n_seeds: int = 5
     seed_base: int = 1234
     use_tqdm: bool = True
+    # Numero di worker per esecuzione parallela su seed (1 = sequenziale)
+    n_workers: int = 6
 
     # --- sottostrutture ---
     tam: TAMParams = field(default_factory=TAMParams)

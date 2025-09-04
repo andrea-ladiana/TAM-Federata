@@ -76,7 +76,12 @@ def single_round_step(
     J_KS = np.asarray(propagate_J(J_rec, J_real=-1, verbose=False, iters=hp.prop.iters), dtype=np.float32)
 
     # 4) cut spettrale
-    V, *_ = spectral_cut(J_KS, tau=hp.spec.tau)
+    _spec_out = spectral_cut(J_KS, tau=hp.spec.tau, return_info=True)
+    if len(_spec_out) == 3:
+        V, k_eff_cut, info_spec = _spec_out
+    else:  # fallback (shouldn't happen with return_info=True but guard defensively)
+        V, k_eff_cut = _spec_out
+        info_spec = {"evals": None}
 
     # 5) disentangling + magnetizzazioni (robusto con fallback interno)
     xi_r, _m_vec = dis_check(
@@ -93,7 +98,10 @@ def single_round_step(
 
     # 6) metriche
     #    6a) retrieval (matching ungherese)
-    retr = retrieval_mean_hungarian(xi_r.astype(int), xi_true.astype(int))
+    # NOTE: BUGFIX (2025-09-04): in precedenza si usava xi_r.astype(int) che, per valori float in (-1,1),
+    #       li troncava a 0 abbattendo gli overlap (~0.1 medio). Ora binarizziamo con segno in {+1,-1}.
+    xi_r_bin = np.where(xi_r >= 0, 1, -1).astype(np.int8)
+    retr = retrieval_mean_hungarian(xi_r_bin, xi_true.astype(int))
     #    6b) coverage su questo round
     cov = compute_round_coverage(labels_t, K=hp.K)
     #    6c) FRO vs J*
@@ -104,10 +112,19 @@ def single_round_step(
     else:
         K_eff, _, _ = estimate_keff(J_KS, method="shuffle")
 
+    # --- DIAGNOSTICA FACOLTATIVA ---
+    # Abilita impostando una variabile di ambiente UNSUP_DEBUG=1 per evitare stampe rumorose di default.
+    import os
+    if os.environ.get("UNSUP_DEBUG", "0") == "1":
+        evals = info_spec.get("evals")
+        # prime 5 autovalori
+        top_evals = np.array2string(evals[:5], precision=3) if evals is not None else "[]"
+        print(f"[DEBUG single_round] k_spec={k_eff_cut} K_eff={K_eff} retr~{float(retr):.3f} fro={float(fro):.3f} top_eigs={top_evals}")
+
     # 7) aggiorna memoria xi_ref per round successivo
-    if xi_r.shape[0] >= hp.K:
-        xi_ref_new = xi_r[: hp.K].astype(int)
+    if xi_r_bin.shape[0] >= hp.K:
+        xi_ref_new = xi_r_bin[: hp.K]
     else:
-        xi_ref_new = xi_r.astype(int)
+        xi_ref_new = xi_r_bin
 
     return xi_ref_new, J_KS, RoundLog(retrieval=float(retr), fro=float(fro), keff=int(K_eff), coverage=float(cov))

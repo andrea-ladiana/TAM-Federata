@@ -1,0 +1,23 @@
+{
+  "hyperparams": {
+    "L": 3,
+    "K": 9,
+    "N": 784,
+    "n_batch": 12,
+    "M_total": 7200,
+    "K_per_client": 5,
+    "w": 0.9,
+    "seed_base": 2025
+  },
+  "hopfield_params": {
+    "beta": 5.0,
+    "updates": 30,
+    "reps_per_archetype": 32,
+    "start_overlap": 1.0
+  },
+  "digests": {
+    "J_server_sha": "0b7782632e67b6db",
+    "xi_true_sha": "21e6eaa877d179b6",
+    "xi_final_sha": "7694d13b24200dc3"
+  }
+}

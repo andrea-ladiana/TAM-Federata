@@ -1,0 +1,21 @@
+{
+  "final": {
+    "retrieval": 0.10204081632653061,
+    "frobenius_rel": 0.926156759262085,
+    "K_eff": 1.0,
+    "coverage": 1.0
+  },
+  "mean_over_rounds": {
+    "retrieval": 0.1018754724111867,
+    "frobenius_rel": 0.9266651074091593,
+    "K_eff": 1.0,
+    "coverage": 1.0
+  },
+  "best": {
+    "retrieval_max": 0.10204081632653061,
+    "frobenius_rel_min": 0.926054060459137,
+    "K_eff_max": 1.0,
+    "coverage_max": 1.0
+  },
+  "n_rounds": 12
+}

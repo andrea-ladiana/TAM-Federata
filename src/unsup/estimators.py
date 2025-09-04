@@ -42,9 +42,11 @@ def build_unsup_J_single(ETA_t: np.ndarray, K: int) -> Tuple[np.ndarray, int]:
     L, M_c, N = ETA_t.shape
     if K <= 0:
         raise ValueError("K deve essere > 0.")
-    M_eff = max(1, int(M_c // K))
+    # Numero effettivo di campioni PER LAYER usati per costruire J in questo round.
+    # Questo è il denominatore corretto per unsupervised_J e quello da fornire al metodo MP.
+    M_eff = int(M_c)
 
-    # Calcola J_unsup per ciascun layer e media
+    # Calcola J_unsup per ciascun layer e media (scalando con M_c corretto)
     Js = [unsupervised_J(np.asarray(ETA_t[l], dtype=np.float32), M_eff) for l in range(L)]
     J_unsup = np.sum(Js, axis=0) / float(L)
 

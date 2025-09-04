@@ -306,11 +306,12 @@ def run_exp01_single(
 
     per_seed: List[SeedResult] = []
 
-    # Optional multithread path over seeds (off by default; set UNSUP_N_WORKERS>1)
+    # Optional multithread path over seeds; controlled by hp.n_workers (default 1)
     try:
-        import os as _os
-        _n_workers = max(1, int(_os.environ.get('UNSUP_N_WORKERS', '1')))
+        _n_workers = int(getattr(hp, 'n_workers', 1))
     except Exception:
+        _n_workers = 1
+    if _n_workers < 1:
         _n_workers = 1
     if _n_workers > 1 and len(seeds) > 1:
         from concurrent.futures import ThreadPoolExecutor

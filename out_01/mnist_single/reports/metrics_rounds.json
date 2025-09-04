@@ -1,0 +1,88 @@
+{
+  "metrics": [
+    {
+      "round": 0,
+      "retrieval": 0.10175736961451248,
+      "frobenius_rel": 0.926054060459137,
+      "K_eff": 1.0,
+      "coverage": 1.0
+    },
+    {
+      "round": 1,
+      "retrieval": 0.10175736961451248,
+      "frobenius_rel": 0.9269335269927979,
+      "K_eff": 1.0,
+      "coverage": 1.0
+    },
+    {
+      "round": 2,
+      "retrieval": 0.10175736961451248,
+      "frobenius_rel": 0.9267343878746033,
+      "K_eff": 1.0,
+      "coverage": 1.0
+    },
+    {
+      "round": 3,
+      "retrieval": 0.10175736961451248,
+      "frobenius_rel": 0.9265466332435608,
+      "K_eff": 1.0,
+      "coverage": 1.0
+    },
+    {
+      "round": 4,
+      "retrieval": 0.10175736961451248,
+      "frobenius_rel": 0.9266965389251709,
+      "K_eff": 1.0,
+      "coverage": 1.0
+    },
+    {
+      "round": 5,
+      "retrieval": 0.10175736961451248,
+      "frobenius_rel": 0.9269748330116272,
+      "K_eff": 1.0,
+      "coverage": 1.0
+    },
+    {
+      "round": 6,
+      "retrieval": 0.10175736961451248,
+      "frobenius_rel": 0.9262790679931641,
+      "K_eff": 1.0,
+      "coverage": 1.0
+    },
+    {
+      "round": 7,
+      "retrieval": 0.10204081632653061,
+      "frobenius_rel": 0.927175760269165,
+      "K_eff": 1.0,
+      "coverage": 1.0
+    },
+    {
+      "round": 8,
+      "retrieval": 0.10204081632653061,
+      "frobenius_rel": 0.9262086153030396,
+      "K_eff": 1.0,
+      "coverage": 1.0
+    },
+    {
+      "round": 9,
+      "retrieval": 0.10204081632653061,
+      "frobenius_rel": 0.9271695017814636,
+      "K_eff": 1.0,
+      "coverage": 1.0
+    },
+    {
+      "round": 10,
+      "retrieval": 0.10204081632653061,
+      "frobenius_rel": 0.9270516037940979,
+      "K_eff": 1.0,
+      "coverage": 1.0
+    },
+    {
+      "round": 11,
+      "retrieval": 0.10204081632653061,
+      "frobenius_rel": 0.926156759262085,
+      "K_eff": 1.0,
+      "coverage": 1.0
+    }
+  ]
+}

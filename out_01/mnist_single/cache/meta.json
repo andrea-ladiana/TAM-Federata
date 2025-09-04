@@ -1,0 +1,14 @@
+{
+  "n_batch": 12,
+  "M_total": 7200,
+  "seed_base": 2025,
+  "K": 9,
+  "L": 3,
+  "N": 784,
+  "hopfield": {
+    "beta": 5.0,
+    "updates": 30,
+    "reps_per_archetype": 32,
+    "start_overlap": 1.0
+  }
+}
