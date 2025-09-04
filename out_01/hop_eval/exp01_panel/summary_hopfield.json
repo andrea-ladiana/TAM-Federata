@@ -4,9 +4,9 @@
   "reps": 100,
   "start_overlap": 0.7,
   "stochastic": true,
-  "pearson": 0.9023469553540256,
+  "pearson": 0.897233293760246,
   "spearman": 0.8833333333333184,
-  "overall_mean": 0.7351629629629629,
-  "overall_std": 0.4111343188257194,
+  "overall_mean": 0.7373111111111111,
+  "overall_std": 0.40880475099313235,
   "K": 9
 }

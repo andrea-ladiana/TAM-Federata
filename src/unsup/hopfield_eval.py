@@ -484,7 +484,9 @@ def plot_magnetization_distribution(
     df = pd.DataFrame(df)
     if ax is None:
         _, ax = plt.subplots(figsize=(6, 4))
-    sns.boxplot(data=df, x="archetipo", y="mag", ax=ax, palette=palette, showfliers=False)
+    # Use violin plot on the left as requested, keep individual points as jittered stripplot
+    # inner='quartile' shows median and quartiles inside the violin; cut=0 avoids extended tails
+    sns.violinplot(data=df, x="archetipo", y="mag", ax=ax, palette=palette, inner="quartile", cut=0)
     if jitter > 0:
         sns.stripplot(data=df, x="archetipo", y="mag", ax=ax, color="k", alpha=0.5, size=3, jitter=jitter)
     ax.axhline(1.0, ls="--", c="gray", lw=1)

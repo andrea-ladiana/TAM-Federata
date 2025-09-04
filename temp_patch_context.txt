@@ -1,0 +1,103 @@
+        if reused is not None:
+            return reused
+
+    # lista seeds
+    if seeds is None:
+        seeds = [hp.seed_base + i for i in range(hp.n_seeds)]
+
+    per_seed: List[SeedResult] = []
+
+    # loop seeds
+    for seed in seeds:
+        rng = np.random.default_rng(seed)
+        # 1) archetipi veri (K,N) — NB: functions.gen_patterns(N, P)
+        xi_true = np.asarray(gen_patterns(hp.N, hp.K), dtype=np.int32)
+        # 2) ideal J* (pseudo-inversa)
+        J_star = np.asarray(JK_real(xi_true), dtype=np.float32)
+
+        # 3) subset per client
+        if hp.K_per_client is None:
+            raise ValueError("K_per_client must be specified for partial coverage datasets.")
+        subsets = make_client_subsets(K=hp.K, L=hp.L, K_per_client=hp.K_per_client, rng=rng)
+
+        # 4) dataset SINGLE
+        ETA, labels = gen_dataset_partial_archetypes(
+            xi_true=xi_true,
+            M_total=hp.M_total,
+            r_ex=hp.r_ex,
+            n_batch=hp.n_batch,
+            L=hp.L,
+            client_subsets=subsets,
+            rng=rng,
+            use_tqdm=hp.use_tqdm,
+        )
+
+        # 5) per-round
+        series: List[RoundLog] = []
+        xi_ref: Optional[np.ndarray] = None
+        J_server_final: Optional[np.ndarray] = None
+
+        for t in range(hp.n_batch):
+            # Dati round t
+            ETA_t = new_round_single(ETA, t)            # (L, M_c, N)
+            labels_t = labels[:, t, :]                  # (L, M_c)
+
+            # Stima J unsup & blending memoria
+            J_unsup, M_eff = build_unsup_J_single(ETA_t, K=hp.K)  # (N,N), int
+            J_rec = blend_with_memory(J_unsup, xi_prev=xi_ref, w=hp.w)
+
+            # Propagation pseudo-inversa (iterazioni da hp.prop.iters)
+            J_KS = np.asarray(propagate_J(J_rec, J_real=-1, verbose=False, iters=hp.prop.iters), dtype=np.float32)
+
+            # Cut spettrale & Keff (coerente con SINGLE ⇒ MP usa M_eff del round)
+            V, _k_from_cut, *_ = spectral_cut(J_KS, tau=hp.spec.tau)
+            if hp.estimate_keff_method == "mp":
+                K_eff, _, _ = estimate_keff(J_KS, method="mp", M_eff=M_eff)
+            else:
+                K_eff, _, _ = estimate_keff(J_KS, method="shuffle")
+
+            # Disentangling (TAM) + magnetizzazioni
+            xi_r, m_vec = dis_check(
+                V=V,
+                K=hp.K,
+                L=hp.L,
+                J_rec=J_rec,
+                JKS_iter=J_KS,
+                xi_true=xi_true,
+                tam=hp.tam,
+                spec=hp.spec,
+                show_progress=hp.use_tqdm,
+            )
+
+            # Retrieval medio (matching ungherese) e coverage
+            retr = retrieval_mean_hungarian(xi_r.astype(int), xi_true.astype(int))
+            cov = compute_round_coverage(labels_t, K=hp.K)
+
+            # FRO rispetto a J*
+            fro = frobenius_relative(J_KS, J_star)
+
+            series.append(RoundLog(retrieval=retr, fro=fro, keff=int(K_eff), coverage=float(cov)))
+
+            # memoria per round successivo (prendi primi K candidati)
+            if xi_r.shape[0] >= hp.K:
+                xi_ref = xi_r[: hp.K].astype(int)
+            else:
+                xi_ref = xi_r.astype(int)
+
+            # mantieni ultima J_KS
+            J_server_final = J_KS
+
+        assert J_server_final is not None and xi_ref is not None
+        expo_counts = count_exposures(labels, K=hp.K)
+
+        per_seed.append(
+            SeedResult(
+                seed=seed,
+                series=series,
+                J_server_final=J_server_final.astype(np.float32),
+                xi_ref_final=xi_ref.astype(int),
+                exposure_counts=expo_counts.astype(int),
+                xi_true=xi_true.astype(int),
+            )
+        )
+

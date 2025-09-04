@@ -396,3 +396,4 @@ def estimate_K_eff_from_J(J, method="mp", alpha=0.01, n_random=32, M_eff=None, d
     else:
         raise ValueError("method must be 'shuffle' or 'mp'")
 
+

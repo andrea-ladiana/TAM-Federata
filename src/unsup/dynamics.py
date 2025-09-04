@@ -69,9 +69,8 @@ def eigen_cut(JKS: np.ndarray, tau: float = 0.5) -> Tuple[np.ndarray, np.ndarray
     """
     if JKS.ndim != 2 or JKS.shape[0] != JKS.shape[1]:
         raise ValueError("JKS deve essere quadrata.")
-    vals, vecs = np.linalg.eig(JKS)
-    vals = np.real(vals)
-    vecs = np.real(vecs)
+    # Use symmetric eigendecomposition for speed and stability
+    vals, vecs = np.linalg.eigh(JKS)
     mask = vals > float(tau)
     V = vecs[:, mask].T  # (K_eff, N)
     return vals[mask], V
@@ -137,7 +136,8 @@ def _prune_and_score(xi_r: np.ndarray, JKS: np.ndarray, xi_true: np.ndarray, spe
 
     N = JKS.shape[0]
     # 1) spectral alignment
-    quad = np.einsum("ij,aj->ai", JKS, xi_r)          # (K_tilde, N)
+    # quad[a,i] = sum_j JKS[i,j] * xi_r[a,j] = (xi_r @ JKS^T)[a,i]
+    quad = (xi_r @ JKS.T)
     align = (np.einsum("ai,ai->a", xi_r, quad) / N)   # (K_tilde,)
     keep = align >= float(spec.rho)
     xi_r = xi_r[keep]

@@ -7,6 +7,31 @@ except Exception:  # fallback no-op
 # Minimal NumPy backend implementing only the used TensorFlow-like ops
 class _Backend:
     def einsum(self, subscripts, *operands, **kwargs):
+        # Fast paths for common contractions used in this project
+        try:
+            if subscripts == 'ai,aj->ij' and len(operands) == 2:
+                A, B = operands
+                return A.T @ B
+            if subscripts == 'ij,Aj->Ai' and len(operands) == 2:
+                J, S = operands
+                return S @ J.T
+            if subscripts == 'ki,pi->kp' and len(operands) == 2:
+                A, B = operands
+                return A @ B.T
+            if subscripts == 'ki,pi->pk' and len(operands) == 2:
+                A, B = operands
+                return B @ A.T
+            if subscripts == 'ki,kp,pj->ij' and len(operands) == 3:
+                A, C, B = operands
+                return (A.T @ C) @ B
+            if subscripts == 'ij,slj->sli' and len(operands) == 2:
+                J, S = operands
+                return np.tensordot(S, J, axes=([2], [1]))
+        except Exception:
+            pass
+        # Default: enable optimized contraction planning
+        if 'optimize' not in kwargs:
+            kwargs['optimize'] = True
         return np.einsum(subscripts, *operands, **kwargs)
     def sign(self, x):
         x = np.sign(x)

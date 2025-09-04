@@ -45,9 +45,8 @@ def eigen_cut(
         {'evals': evals_desc, 'keep_mask': mask_desc}
     """
     J_sym = _symmetrize(J)
-    evals, evecs = np.linalg.eig(J_sym)
-    evals = np.real(evals)
-    evecs = np.real(evecs)
+    # Use symmetric eigendecomposition for speed and stability
+    evals, evecs = np.linalg.eigh(J_sym)
 
     # Ordina per autovalore decrescente
     order = np.argsort(evals)[::-1]

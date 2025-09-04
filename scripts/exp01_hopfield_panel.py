@@ -71,7 +71,7 @@ USE_XI_TRUE = True      # se disponibili archetipi veri
 # Controlli separati:
 # - FORCE_FEDERATED: forza riesecuzione dell'apprendimento federato (run_exp01_single)
 # - FORCE_HOPFIELD: forza riesecuzione della valutazione Hopfield anche se esiste una cartella di valutazione
-FORCE_FEDERATED = True
+FORCE_FEDERATED = False
 FORCE_HOPFIELD = True   # forza SOLO la parte Hopfield (ignora cache hopfield_eval)
 # backward compat: se FORCE_RUN era usato, manteniamo comportamento (entrambi True)
 FORCE_RUN = False        # Deprecated: usa FORCE_FEDERATED / FORCE_HOPFIELD
