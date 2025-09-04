@@ -22,6 +22,8 @@ dist/
 results/
 risultati/
 logs/
+out_01/
+out_06/
 experiments/**/log.jsonl
 experiments/**/hyperparams.json
 experiments/**/results_table.csv

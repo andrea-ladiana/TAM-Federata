@@ -1,0 +1,26 @@
+Vorrei ragionare meglio sull'esperimento 06. Voglio, da esperto mondiale di programmazione, di meccanica statistica e di federated learning, che tu mi dia una mano.
+
+La situazione preliminare è questa ho riorganizzato leggermente la codebase, in modo che i file .py siano più compartimentati e suddividano meglio le diverse funzioni. Te li allego comunque tutti. Ti allego inoltre un pdf aggiuntivo, che esplora setting e fa alcune riflessioni sull'esperimento 06 (vedi sezioni 16 e 17).
+Infine ti allego il file con cui prima eseguivo l'esperimento (exp_06_mixing_drift_k_3_single.py) che vorrei un attimo migliorare. L'idea sarà di base quella di ri-usare il codice già scritto per creare uno o più script poi propri dell'esperimento (e lì la logica di base devi copiarla da exp_06_mixing_drift_k_3_single.py).
+
+Fatto fondamentale, da ricordare per tutta la conversazione è che il setting che voglio esplorare è quello "single", mai quello "extend". E' fondamentale.
+
+L'esperimento di per sé è già ben costruito e mostra appunto come la rete impara (ad esempio in modalità "cyclic") nell'avvicendarsi dei round, nel caso in cui la distribuzione di campionamento degli esempi dagli archetipi varia nel tempo. Ci sono interessanti connessioni con il continual learning, il trade-off tra consolidation e plasticity, catastrophic forgetting ecc. 
+
+Il grafico sul simplesso è molto bello e si riesce ad interpretare bene, ed anche quello presente ora è interessante, che fa vedere la drifting force ed il retrieval dei vari archetipi al variare dei round.
+Se la rete riesce ad imparare bene, e a non dimenticare quello che vede, la traiettoria sul simplesso va a cadere verso il centro del triangolo, e tutti e tre gli archetipi riescono ad essere recuperati.
+Se ho troppa inerzia non riesco a imparare i nuovi archetipi, la traiettoria sul simplesso rimane verso il primo archetipo visto (non riesco ad imparare gli altri) e la magnetizzazione rimane bassa negli altri due anche negli altri grafici.
+Se invece ho troppa plasticità accade il catastrophic forgetting: nel grafico sul simplesso la traiettoria seguirebbe bene o male il perimetro del simplesso e la rete andrebbe via via a dimenticare gli archetipi prima appresi. 
+E' dunque interessante sia vedere cosa succede a w fisso (basso, intermedio e alto) per vedere questi 3 fenomeni, per poi andare a vedere se si riesce a studiare una procedura in questo caso per trovare un w adattivo: se c'è un drift importante nella distribuzione dei dati, rendo la rete leggermente più plastica per poter consentire l'apprendimento. 
+
+Studia in ogni caso attentamente il pdf, è ricco di idee teoriche su come arricchire le simulazioni, su ulteriori esperimenti da fare (sempre legati allo 06) e grafici.
+
+Una parte però da precisare, molto importante, riguarda il calcolo della magnetizzazione. E' molto probabile che per come sia implementata adesso la logica sia completamente sbagliata.
+C'è un solo modo per calcolare la magnetizzazione rispetto ad un determinato archetipo, per vedere che effettivamente l'informazione ad un dato round è stata appresa e incapsulata nella matrice sinaptica J(t).
+Quello che si deve fare è questo: estrarre la matrice hebbiana server ad un dato round, utilizzarla per inizializzare le sinapsi di una rete di Hopfield corrispondente, dopodiché se si vuole testare il retrieval dell'archetipo \xi_\mu ad esempio, si prende un esempio (versione corrotta dell'archetipo) generato da \xi_\mu e con esso si inizializza la rete (stato iniziale) e si fa partire la dinamica di Hopfield (dinamica a la Glauber). Se l'archetipo è stato imparato allora la dinamica convergerà dall'esempio sporco all'archetipo pulito e la magnetizzazione (ossia proprio l'overlap tra stato della rete ed archetipo corrispondente) convergerà ad 1. In caso contrario non sarà 1 la magnetizzazione (ovviamente è meglio se questo processo viene ripetuto più volte per mostrare anche delle barre di errore) . Questo è l'unico modo corretto per vedere che gli archetipi sono stati imparati correttamente e per mostrare valori di magnetizzazione.
+Ad esempio se al primo round vedo molti esempi di \xi_1 e molti pochi di \xi_2 e \xi_3, a causa del campionamento difforme, se estraggo la matrice server alla fine del primo round e la uso per fare questi esperimenti cercando di richiamare i tre archetipi diversi, avrò buoni risultati sul primo (magnetizzazioni sempre prossime ad 1) e cattivi risultati (magnetizzazione bassa prossima a zero) sugli altri due. Ripeto, questo è l'unico modo per valutare il retrieval degli archetipi.
+
+Detto questo, e ribadito che i grafici vecchi sono molto interessanti e significativi, dimmi cosa ne pensi (non scrivere codice ancora) e fammi un resoconto completo di cosa aggiungere, quali grafici o simulazioni potrebbero arricchire ancora di più il quadro. Infine dovrei sperimentare questo esperimento su un dataset reale, magari prendendo 3 categorie o archetipi del FMNIST, e vedere se si riesce a fare una cosa del genere sui dati strutturati.
+
+Pensa attentamente e fammi un resoconto completo.
+
