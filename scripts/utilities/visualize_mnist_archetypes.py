@@ -34,7 +34,7 @@ from src.unsup.mnist_hfl import load_mnist, binarize_images, class_prototypes_si
 # ---------------------------------------------------------------------------
 CLASSES: Sequence[int] = list(range(1, 10))  # 1..9
 THRESHOLD = 0.5
-OUT_DIR = Path("out_01/mnist_single")
+OUT_DIR = Path("scripts/utilities")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 SAVE_PATH = OUT_DIR / "archetypes_grid.png"
 SAVE_PATH_ALT = OUT_DIR / "archetypes_grid_density.png"

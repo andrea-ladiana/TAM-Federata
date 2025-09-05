@@ -25,8 +25,21 @@ class _Backend:
                 A, C, B = operands
                 return (A.T @ C) @ B
             if subscripts == 'ij,slj->sli' and len(operands) == 2:
+                # Compute h1 = einsum('ij,slj->sli', J, S) efficiently by
+                # reshaping the (s,L,N) tensor to (s*L, N), performing a
+                # single matrix multiply with J.T and reshaping back. This
+                # avoids potentially expensive tensordot plans and is much
+                # faster for typical sizes used in the dynamics.
                 J, S = operands
-                return np.tensordot(S, J, axes=([2], [1]))
+                J = np.asarray(J)
+                S = np.asarray(S)
+                # S: (s, L, N), J: (N, N) -> want out: (s, L, N) with
+                # out[s,l,i] = sum_j J[i,j] * S[s,l,j] which equals
+                # (S_flat @ J.T).reshape(s, L, N)
+                s_dim, L_dim, N_dim = S.shape
+                S_flat = S.reshape(s_dim * L_dim, N_dim)
+                out_flat = S_flat @ J.T
+                return out_flat.reshape(s_dim, L_dim, J.shape[0])
         except Exception:
             pass
         # Default: enable optimized contraction planning

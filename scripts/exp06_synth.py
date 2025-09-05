@@ -298,9 +298,12 @@ def _create_panel4x_and_scatter(run_dir: Path, w: float, simplex_style: str, pan
         M_plot = M
         M_sem = None  # s.e.m. non disponibile round-wise: opzionale
 
-    # phase metric locale: media m (se M disponibile)
+    # phase metric locale: media m (safe: controlla array vuoto/None prima di np.mean)
     phase_ws = [w]
-    phase_metric = [float(np.mean(M_plot))] if M_plot is not None else [np.nan]
+    if M_plot is None or getattr(M_plot, "size", 0) == 0:
+        phase_metric = [float("nan")]
+    else:
+        phase_metric = [float(np.mean(M_plot))]
 
     # 1) Pannello 4×
     fig, _info = panel4x(

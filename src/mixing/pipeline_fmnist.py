@@ -334,6 +334,17 @@ def run_seed_fmnist(
             "pi_hat_data": pi_hat.tolist(),
             "pi_true": pi_t.tolist(),
         }
+        # Save per-round metrics for easy inspection (includes K_eff)
+        try:
+            _save_json(rdir / "metrics.json", metrics_t)
+        except Exception:
+            pass
+
+        # Short console notice so the user can see K_eff during runs
+        try:
+            print(f"[Round {t:03d}] K_eff={int(K_eff)} n_eigs_sel={int(V.shape[0])} TV_pi={TV_t:.4f}")
+        except Exception:
+            pass
         all_rounds.append(metrics_t)
 
         # valutazione Hopfield (post-hoc) + estrazione pi_hat_retrieval

@@ -106,7 +106,15 @@ def init_candidates_from_eigs(V: np.ndarray, L: int, s: int | None = None, rng: 
         return np.empty((0, N), dtype=int)
 
     if s is None:
+        # Empirical formula from notebook can produce very large s when
+        # K_eff is large (e.g. hundreds). Large s -> huge (s*L,N) tensors and
+        # extremely expensive matmuls in TAM_Network.compute_fields. Cap s to
+        # a reasonable maximum to keep runtime bounded while retaining
+        # sufficient candidate diversity. 500 is a conservative default.
         s = max(1, 10 * int((K_eff / max(1, L)) * np.log(K_eff / 0.01)))
+        max_s = 500
+        if s > max_s:
+            s = max_s
 
     rng = np.random.default_rng() if rng is None else rng
     W = rng.normal(0.0, 1.0, size=(s, K_eff))  # (s, K_eff)

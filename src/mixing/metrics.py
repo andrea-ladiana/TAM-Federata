@@ -172,9 +172,14 @@ def lag_and_amplitude(
     # ampiezze radiali (distanza dal baricentro)
     r_true = _radial_distance(xy_true)
     r_hat = _radial_distance(xy_hat)
-    # evitare divisioni per zero
-    denom = float(np.mean(r_true)) if np.mean(r_true) > 1e-8 else 1.0
-    amp_ratio = float(np.mean(r_hat) / denom)
+    # evitare divisioni per zero e mean su slice vuote
+    if getattr(r_true, "size", 0) == 0:
+        denom = 1.0
+    else:
+        mean_r_true = float(np.mean(r_true))
+        denom = mean_r_true if mean_r_true > 1e-8 else 1.0
+    mean_r_hat = float(np.mean(r_hat)) if getattr(r_hat, "size", 0) > 0 else 0.0
+    amp_ratio = float(mean_r_hat / denom)
 
     return {
         "lag_rounds": lag_rounds,

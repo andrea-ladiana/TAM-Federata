@@ -19,6 +19,7 @@ dist/
 *.iml
 
 # Data / results
+data/
 results/
 risultati/
 logs/
