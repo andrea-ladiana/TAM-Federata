@@ -39,7 +39,8 @@ from src.unsup.config import HyperParams  # :contentReference[oaicite:1]{index=1
 from src.unsup.data import new_round_single, compute_round_coverage, count_exposures  # :contentReference[oaicite:2]{index=2}
 from src.unsup.estimators import build_unsup_J_single, blend_with_memory  # :contentReference[oaicite:3]{index=3}
 from src.unsup.functions import propagate_J, estimate_K_eff_from_J, gen_patterns  # :contentReference[oaicite:4]{index=4}
-from src.unsup.dynamics import eigen_cut, dis_check  # :contentReference[oaicite:5]{index=5}
+from src.unsup.dynamics import dis_check  # :contentReference[oaicite:5]{index=5}
+from src.unsup.spectrum import estimate_keff as _estimate_keff_spectrum
 from src.unsup.hopfield_eval import run_or_load_hopfield_eval  # :contentReference[oaicite:6]{index=6}
 from .control import (
     compute_drift_signals,
@@ -290,9 +291,72 @@ def run_seed_synth(
         # propagazione + cut spettrale
         J_KS = propagate_J(J_rec, iters=hp.prop.iters, eps=hp.prop.eps, tol=1e-8)  # :contentReference[oaicite:13]{index=13}
         np.save(rdir / "J_KS.npy", J_KS.astype(np.float32))
-        vals_sel, V = eigen_cut(J_KS, tau=hp.spec.tau)  # :contentReference[oaicite:14]{index=14}
-        np.save(rdir / "eigs_sel.npy", vals_sel.astype(np.float32))
-        np.save(rdir / "V_sel.npy", V.astype(np.float32))
+
+        # Selezione autovettori per TAM: preferisci K_eff (shuffle/MP),
+        # con fallback a top-K se la soglia fissa restituirebbe < K vettori.
+        try:
+            # 1) eigendecomp ordinata (decrescente)
+            evals, evecs = np.linalg.eigh((J_KS + J_KS.T) * 0.5)
+            order = np.argsort(evals)[::-1]
+            evals_desc = evals[order]
+            evecs_desc = evecs[:, order]
+
+            # 2) stima K_eff coerente con i report
+            K_eff_est, keep_mask_keff, _info = _estimate_keff_spectrum(J_KS, method=hp.estimate_keff_method, M_eff=M_eff)
+            keep_mask_keff = np.asarray(keep_mask_keff, dtype=bool).reshape(-1)
+            keff_threshold = float(_info.get("threshold", np.nan)) if isinstance(_info, dict) else float("nan")
+            # 2b) maschera da soglia fissa tau (per robustezza/back-compat)
+            keep_mask_tau = evals_desc > float(hp.spec.tau)
+
+            # 3) costruisci maschera finale: almeno K autovettori
+            K_target = int(max(1, hp.K))
+            if keep_mask_keff.size != evals_desc.size:
+                # fallback di sicurezza su top-K
+                keep_idx = np.arange(min(K_target, evals_desc.size))
+            else:
+                union_mask = np.logical_or(keep_mask_keff, keep_mask_tau)
+                n_union = int(np.sum(union_mask))
+                if n_union >= K_target:
+                    keep_idx = np.where(union_mask)[0]
+                else:
+                    # integra top‑K per garantire almeno K componenti
+                    base = list(np.where(union_mask)[0])
+                    extra = [i for i in range(evals_desc.size) if i not in base][:max(0, K_target - n_union)]
+                    keep_idx = np.array(base + extra, dtype=int)
+            # Limita a massimo K componenti (in ordine di importanza spettrale)
+            if keep_idx.size > K_target:
+                keep_idx = keep_idx[:K_target]
+
+            V = evecs_desc[:, keep_idx].T.astype(np.float32)
+            vals_sel = evals_desc[keep_idx].astype(np.float32)
+            eig_sel_info = {
+                "K_eff_est": int(K_eff_est),
+                "keff_threshold": keff_threshold,
+                "tau": float(hp.spec.tau),
+                "n_keff_mask": int(np.sum(keep_mask_keff)) if keep_mask_keff.size == evals_desc.size else None,
+                "n_tau_mask": int(np.sum(keep_mask_tau)),
+                "n_final": int(V.shape[0]),
+            }
+        except Exception:
+            # Ultimo fallback: usa tutti gli autovettori (potrebbe essere costoso ma robusto)
+            evals, evecs = np.linalg.eigh((J_KS + J_KS.T) * 0.5)
+            order = np.argsort(evals)[::-1]
+            evals_desc = evals[order]
+            evecs_desc = evecs[:, order]
+            keep_idx = np.arange(min(int(hp.K), evals_desc.size))
+            V = evecs_desc[:, keep_idx].T.astype(np.float32)
+            vals_sel = evals_desc[keep_idx].astype(np.float32)
+            eig_sel_info = {
+                "K_eff_est": None,
+                "keff_threshold": None,
+                "tau": float(hp.spec.tau),
+                "n_keff_mask": None,
+                "n_tau_mask": int(np.sum(evals_desc > float(hp.spec.tau))),
+                "n_final": int(V.shape[0]),
+            }
+
+        np.save(rdir / "eigs_sel.npy", vals_sel)
+        np.save(rdir / "V_sel.npy", V)
 
         # disentangling TAM + pruning
         xi_r, m = dis_check(
@@ -334,6 +398,8 @@ def run_seed_synth(
             "K_eff": int(K_eff),
             "M_eff": int(M_eff),
             "n_eigs_sel": int(V.shape[0]),
+            "n_candidates": int(xi_r.shape[0]),
+            "eig_selection": eig_sel_info,
             "TV_pi": TV_t,
             # Mantieni la stima data-driven e anche sotto alias esplicito
             "pi_hat": pi_hat.tolist(),

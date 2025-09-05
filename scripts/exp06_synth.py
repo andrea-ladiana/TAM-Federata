@@ -19,6 +19,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import os
+import platform
+import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 
@@ -94,16 +97,25 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--K", type=int, default=3, help="Numero archetipi")
     p.add_argument("--N", type=int, default=300, help="Dimensione dei pattern")
     p.add_argument("--rounds", type=int, default=12, help="Numero di round (T)")
-    p.add_argument("--M-total", type=int, default=4800, help="Numero totale di esempi")
+    p.add_argument("--M-total", type=int, default=1200, help="Numero totale di esempi")
     p.add_argument("--r-ex", type=float, default=0.8, help="Correlazione media campione/archetipo")
-    p.add_argument("--w", type=float, default=0.8, help="Peso 'unsup' nel blend con memoria (usato se --w-policy=fixed)")
+    p.add_argument("--w", type=float, default=0.5, help="Peso 'unsup' nel blend con memoria (usato se --w-policy=fixed)")
 
     # Propagazione / Spettro / TAM (override possibili)
     p.add_argument("--prop-iters", type=int, default=200, help="Iterazioni propagate_J")
     p.add_argument("--prop-eps", type=float, default=1e-2, help="Parametro eps per propagate_J")
-    p.add_argument("--tau", type=float, default=0.5, help="Cut sugli autovalori di J_KS")
-    p.add_argument("--rho", type=float, default=0.6, help="Soglia allineamento spettrale")
-    p.add_argument("--qthr", type=float, default=0.4, help="Pruning per overlap mutuo")
+    p.add_argument("--tau", type=float, default=0.05, help="Cut sugli autovalori di J_KS")
+    p.add_argument("--rho", type=float, default=0.1, help="Soglia allineamento spettrale")
+    p.add_argument(
+        "--qthr",
+        type=float,
+        default=1.0,
+        help=(
+            "Pruning per overlap mutuo: soglia massima su |<xi_a,xi_b>|/N. "
+            "Più ALTA = più permissivo (≈1.0 quasi off). Valori BASSI (es. 0.0) rimuovono tutti i pattern molto simili, "
+            "fino a lasciarne uno solo."
+        ),
+    )
     p.add_argument("--keff-method", type=str, default="shuffle", choices=("shuffle", "mp"), help="Metodo K_eff")
     p.add_argument("--ema-alpha", type=float, default=0.0, help="EMA su J_unsup (0.0=off)")
 
@@ -113,9 +125,9 @@ def build_argparser() -> argparse.ArgumentParser:
                    help="Tipo di mixing-schedule")
     # cyclic
     p.add_argument("--period", type=int, default=12, help="[cyclic] Periodo in round")
-    p.add_argument("--gamma", type=float, default=1.5, help="[cyclic] Ampiezza logits")
+    p.add_argument("--gamma", type=float, default=2.0, help="[cyclic] Ampiezza logits")
     p.add_argument("--temp", type=float, default=1.2, help="[cyclic] Temperatura softmax")
-    p.add_argument("--center-mix", type=float, default=0.15, help="[cyclic] Blend con uniforme")
+    p.add_argument("--center-mix", type=float, default=0.30, help="[cyclic] Blend con uniforme")
     # piecewise_dirichlet
     p.add_argument("--block", type=int, default=4, help="[piecewise_dirichlet] Lunghezza blocco")
     p.add_argument("--alpha", type=float, default=1.0, help="[piecewise_dirichlet] Parametro Dirichlet")
@@ -132,15 +144,18 @@ def build_argparser() -> argparse.ArgumentParser:
     # Plotting
     p.add_argument("--simplex-style", type=str, default="legacy", choices=("modern", "legacy"),
                    help="Stile embedding simplesso per le figure (modern|legacy)")
+    p.add_argument("--panel-mode", type=str, default="exposure",
+                   choices=("phase", "drift", "exposure"),
+                   help="Contenuto quadrante in basso a destra del pannello 4×: phase (diagram), drift (TV drift/mismatch), exposure (cumulative exposure)")
 
     # --- Adaptive w control (common) ---
-    p.add_argument("--w-policy", type=str, default="pctrl",
+    p.add_argument("--w-policy", type=str, default="fixed",
                    choices=("fixed", "threshold", "sigmoid", "pctrl"),
                    help="Policy di aggiornamento w round-wise")
-    p.add_argument("--w-init", type=float, default=0.8, help="Valore iniziale w al round 0")
-    p.add_argument("--w-min", type=float, default=0.05, help="Limite inferiore per w")
-    p.add_argument("--w-max", type=float, default=0.95, help="Limite superiore per w")
-    p.add_argument("--alpha-w", type=float, default=0.3, help="Smoothing sul controllo di w")
+    p.add_argument("--w-init", type=float, default=0.5, help="Valore iniziale w al round 0")
+    p.add_argument("--w-min", type=float, default=0.10, help="Limite inferiore per w")
+    p.add_argument("--w-max", type=float, default=0.90, help="Limite superiore per w")
+    p.add_argument("--alpha-w", type=float, default=0.6, help="Smoothing sul controllo di w")
     p.add_argument("--a-drift", type=float, default=0.5, help="Peso D_t in S_t = a*D_t + b*M_t")
     p.add_argument("--b-mismatch", type=float, default=1.0, help="Peso M_t in S_t = a*D_t + b*M_t")
 
@@ -160,7 +175,7 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--kp", type=float, default=0.8, help="Guadagno proporzionale")
     p.add_argument("--ki", type=float, default=0.0, help="Guadagno integrale")
     p.add_argument("--kd", type=float, default=0.0, help="Guadagno derivativo")
-    p.add_argument("--gate-drift-theta", type=float, default=None,
+    p.add_argument("--gate-drift-theta", type=float, default=0.1,
                    help="Se impostato: se S_t < theta, non aumentare w (gating)")
 
     return p
@@ -264,7 +279,7 @@ def _save_fig(fig, path: Path) -> None:
     plt.close(fig)
 
 
-def _create_panel4x_and_scatter(run_dir: Path, w: float, simplex_style: str) -> None:
+def _create_panel4x_and_scatter(run_dir: Path, w: float, simplex_style: str, panel_mode: str) -> None:
     """Crea pannello 4× e scatter exposure→magnetization per la singola run."""
     results_dir = ensure_dir(run_dir / "results")
     figs_dir = ensure_dir(results_dir / "figs")
@@ -299,6 +314,7 @@ def _create_panel4x_and_scatter(run_dir: Path, w: float, simplex_style: str) -> 
         # Usa embedding legacy per corrispondere allo stile dello stress test
         labels=("μ0", "μ1", "μ2"),
         simplex_style=simplex_style,
+        bottom_right_mode=str(panel_mode),
         suptitle=f"Seed panel — w={w:.2f}",
     )
     _save_fig(fig, figs_dir / "panel4x.png")
@@ -314,6 +330,25 @@ def _create_panel4x_and_scatter(run_dir: Path, w: float, simplex_style: str) -> 
             title="Exposure → Magnetization (per μ)"
         )
         _save_fig(fig, figs_dir / "exposure_vs_m.png")
+
+
+def _open_image_if_possible(img_path: Path) -> None:
+    """Tenta di aprire l'immagine (panel4x.png) con il viewer di sistema.
+    Non solleva eccezioni fatali: silenzia se in ambiente headless.
+    """
+    if not img_path.exists():
+        return
+    try:
+        system = platform.system().lower()
+        if system.startswith("win"):
+            os.startfile(str(img_path))  # type: ignore[attr-defined]
+        elif system == "darwin":
+            subprocess.Popen(["open", str(img_path)])
+        else:  # linux / other
+            subprocess.Popen(["xdg-open", str(img_path)])
+    except Exception:
+        # fallback: nessuna apertura
+        pass
 
 
 def _collect_sibling_w_runs(seed_dir: Path) -> List[Path]:
@@ -468,7 +503,10 @@ def main() -> None:
 
         # === CREAZIONE FIGURE PER QUESTA RUN ===
         try:
-            _create_panel4x_and_scatter(run_dir, w=float(hp.w), simplex_style=str(args.simplex_style))
+            _create_panel4x_and_scatter(run_dir, w=float(hp.w), simplex_style=str(args.simplex_style), panel_mode=str(args.panel_mode))
+            # apertura automatica dell'immagine principale pannello
+            panel_path = run_dir / "results" / "figs" / "panel4x.png"
+            _open_image_if_possible(panel_path)
         except Exception as e:
             print(f"[Plot] Pannello/Scatter non creati per {run_dir}: {e}")
 

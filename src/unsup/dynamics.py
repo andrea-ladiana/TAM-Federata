@@ -145,6 +145,9 @@ def _prune_and_score(xi_r: np.ndarray, JKS: np.ndarray, xi_true: np.ndarray, spe
         return _DisResult(xi_r=np.empty((0, N), dtype=int), magnetisations=np.array([]))
 
     # 2) mutual-overlap pruning (sopra diagonale)
+    #    Nota sui parametri: qthr è una SOGLIA MASSIMA su |<xi_a, xi_b>|/N.
+    #    - qthr BASSA (es. 0.0) => pruning molto severo, spesso resta 1 solo candidato.
+    #    - qthr ALTA  (≈1.0)    => pruning quasi disattivato.
     q = np.abs((xi_r @ xi_r.T) / N).astype(float)
     iu = np.triu_indices(q.shape[0], k=1)
     bad_pairs = q[iu] > float(spec.qthr)

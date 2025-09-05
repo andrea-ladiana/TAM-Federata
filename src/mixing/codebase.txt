@@ -1,0 +1,3185 @@
+# ---- control.py ----
+# -*- coding: utf-8 -*-
+"""
+Controllo adattivo del peso w (Exp-06 single-only).
+
+API principali:
+  - compute_drift_signals: calcola segnali di drift e mismatch (D_t, M_t, S_t)
+  - update_w_threshold: policy A (isteresi su S_t)
+  - update_w_sigmoid:   policy B (sigmoide S_t -> w)
+  - update_w_pctrl:     policy C (PID sul lag di fase |phi|)
+
+Note:
+  - D_t = TV(pi_data_t, pi_data_{t-1}); M_t = TV(pi_mem_{t-1}, pi_data_t)
+  - S_t = a*D_t + b*M_t
+  - Lo smoothing è applicato SOLO al controllo su w (alpha_w), non ai segnali.
+"""
+from __future__ import annotations
+
+from typing import Optional, Dict, Any
+import numpy as np
+
+from .metrics import tv_distance
+
+
+def _normalize_pi(pi: Optional[np.ndarray]) -> Optional[np.ndarray]:
+    if pi is None:
+        return None
+    v = np.asarray(pi, dtype=float)
+    s = float(v.sum())
+    if s <= 0:
+        return np.ones_like(v, dtype=float) / float(v.size)
+    return v / s
+
+
+def compute_drift_signals(
+    pi_data_t: np.ndarray,
+    pi_data_tm1: Optional[np.ndarray],
+    pi_mem_tm1: Optional[np.ndarray],
+    *,
+    a: float = 0.5,
+    b: float = 1.0,
+) -> Dict[str, float]:
+    """
+    Restituisce: {'D_t': drift dati, 'M_t': mismatch memoria→dati, 'S_t': a*D_t + b*M_t}
+    Se mancano tm1, usa 0 per il segnale mancante.
+    """
+    p_t = _normalize_pi(pi_data_t)
+    p_tm1 = _normalize_pi(pi_data_tm1) if pi_data_tm1 is not None else None
+    m_tm1 = _normalize_pi(pi_mem_tm1) if pi_mem_tm1 is not None else None
+
+    if p_tm1 is None:
+        D_t = 0.0
+    else:
+        D_t = float(tv_distance(p_t, p_tm1))
+
+    if m_tm1 is None:
+        M_t = 0.0
+    else:
+        M_t = float(tv_distance(m_tm1, p_t))
+
+    S_t = float(a) * D_t + float(b) * M_t
+    return {"D_t": float(D_t), "M_t": float(M_t), "S_t": float(S_t)}
+
+
+def _smooth(prev: float, target: float, alpha: float) -> float:
+    alpha = float(np.clip(alpha, 0.0, 1.0))
+    return (1.0 - alpha) * float(prev) + alpha * float(target)
+
+
+def update_w_threshold(
+    w_prev: float, D_t: float, M_t: float, S_t: float, *,
+    w_min: float, w_max: float,
+    theta_low: float, theta_high: float,
+    delta_up: float, delta_down: float,
+    alpha_w: float = 0.3,
+) -> float:
+    """Policy A (isteresi). Ritorna w_t smussato.
+
+    Convenzione: w più alto = più plasticità (più peso ai dati correnti).
+    - Se S_t ≥ theta_high: aumenta w di delta_up
+    - Se S_t ≤ theta_low:  diminuisce w di delta_down
+    - Altrimenti: mantieni w_prev
+    """
+    w_star = float(w_prev)
+    if float(S_t) >= float(theta_high):
+        w_star = w_prev + float(delta_up)
+    elif float(S_t) <= float(theta_low):
+        w_star = w_prev - float(delta_down)
+    # clip
+    w_star = float(np.clip(w_star, float(w_min), float(w_max)))
+    # smoothing
+    return float(_smooth(w_prev, w_star, alpha=float(alpha_w)))
+
+
+def update_w_sigmoid(
+    w_prev: float, D_t: float, M_t: float, S_t: float, *,
+    w_min: float, w_max: float,
+    theta_mid: float, beta: float,
+    alpha_w: float = 0.3,
+) -> float:
+    """Policy B (mappatura morbida S_t -> w). Ritorna w_t smussato.
+
+    w_star = w_min + (w_max - w_min) * sigma(beta * (S_t - theta_mid))
+    dove sigma(x) = 1 / (1 + exp(-x)).
+    """
+    s = 1.0 / (1.0 + float(np.exp(-float(beta) * (float(S_t) - float(theta_mid)))))
+    w_star = float(w_min) + (float(w_max) - float(w_min)) * float(s)
+    w_star = float(np.clip(w_star, float(w_min), float(w_max)))
+    return float(_smooth(w_prev, w_star, alpha=float(alpha_w)))
+
+
+def update_w_pctrl(
+    w_prev: float,
+    lag_series_radians: np.ndarray,
+    lag_target: float,
+    *,
+    w_min: float, w_max: float,
+    kp: float, ki: float = 0.0, kd: float = 0.0,
+    alpha_w: float = 0.3,
+    gate_S_t: Optional[float] = None,
+    S_t: Optional[float] = None,
+) -> float:
+    """
+    Policy C (controller sul lag). Calcola errore e = mean(lag_series) - lag_target,
+    integra/deriva su finestra, poi w_star = clip(w_prev - kP*e - kI*sumE + kD*diffE).
+    Applica smoothing: (1-alpha_w)*w_prev + alpha_w*w_star. Ritorna w_t.
+    """
+    series = np.asarray(lag_series_radians, dtype=float).reshape(-1)
+    if series.size == 0:
+        # nessuna informazione: mantieni w_prev
+        return float(np.clip(float(w_prev), float(w_min), float(w_max)))
+
+    e_curr = float(np.mean(series) - float(lag_target))
+    sumE = float(np.sum(series - float(lag_target)))
+    if series.size >= 2:
+        # stima diff sull'ultimo passo (forward difference)
+        e_prev = float(np.mean(series[:-1]) - float(lag_target))
+        diffE = float(e_curr - e_prev)
+    else:
+        diffE = 0.0
+
+    # legge standard con segni: meno proporzionale/integrale, più derivativo
+    w_star = float(w_prev) - float(kp) * e_curr - float(ki) * sumE + float(kd) * diffE
+    w_star = float(np.clip(w_star, float(w_min), float(w_max)))
+
+    # Gating opzionale: se S_t è sotto soglia, non aumentare w
+    if gate_S_t is not None and S_t is not None:
+        try:
+            if float(S_t) < float(gate_S_t):
+                # blocca solo gli incrementi (plasticità in aumento)
+                if w_star > float(w_prev):
+                    w_star = float(w_prev)
+        except Exception:
+            pass
+
+    return float(_smooth(w_prev, w_star, alpha=float(alpha_w)))
+
+
+
+# ---- hopfield_hooks.py ----
+# -*- coding: utf-8 -*-
+"""
+Wrapper/utility per la valutazione di Hopfield round-wise nell'Exp-06 (single-only).
+
+Obiettivo:
+- Fornire una funzione semplice per valutare, salvare (e ricaricare) le magnetizzazioni
+  corrette tramite la dinamica di Hopfield, riusando la primitiva
+  `src.unsup.hopfield_eval.run_or_load_hopfield_eval(...)`.
+- Aggiungere utility per lanciare/riprendere la valutazione su *tutti* i round
+  di una run e per estrarre le matrici m_{μ}(t) in forma (K, T).
+
+Nota: questo modulo NON scrive figure; si occupa solo di eseguire e raccogliere i risultati.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Dict, Any, Optional, Sequence, Tuple, List
+
+import json
+import os
+import numpy as np
+
+# Codebase (riuso)
+from src.unsup.hopfield_eval import run_or_load_hopfield_eval  # noqa: F401
+
+# Utilities locali
+from .io import ensure_dir, read_json, list_round_dirs, find_files  # noqa: F401
+
+
+# ---------------------------------------------------------------------
+# API di base: valutazione Hopfield per un singolo round
+# ---------------------------------------------------------------------
+def eval_hopfield_for_round(
+    round_dir: str | os.PathLike,
+    *,
+    J_server: np.ndarray,
+    xi_true: np.ndarray,
+    exposure_counts: Optional[np.ndarray] = None,
+    beta: float = 3.0,
+    updates: int = 30,
+    reps_per_archetype: int = 32,
+    start_overlap: float = 0.3,
+    force_run: bool = True,
+    save: bool = True,
+    stochastic: bool = True,
+) -> Dict[str, Any]:
+    """
+    Esegue (o ricarica) la valutazione Hopfield per un singolo round.
+
+    Parametri
+    ---------
+    round_dir : cartella del round (es. ".../round_000/")
+    J_server  : matrice sinaptica J_rec(t) del server per quel round
+    xi_true   : archetipi veri binari (K,N)
+    exposure_counts : (opzionale) contatori di esposizione per μ, per report
+    beta, updates, reps_per_archetype, start_overlap, stochastic : parametri Hopfield
+    force_run, save : pass-through al runner della codebase
+
+    Returns
+    -------
+    results : dict (output del runner Hopfield) + meta (path, round_dir)
+    """
+    rdir = Path(round_dir)
+    hop_dir = ensure_dir(rdir / "hopfield")
+    results = run_or_load_hopfield_eval(
+        output_dir=str(hop_dir),
+        J_server=J_server,
+        xi_true=xi_true,
+        exposure_counts=exposure_counts,
+        beta=float(beta),
+        updates=int(updates),
+        reps_per_archetype=int(reps_per_archetype),
+        start_overlap=float(start_overlap),
+        force_run=bool(force_run),
+        save=bool(save),
+        stochastic=bool(stochastic),
+    )
+    # Allego metadati minimi utili
+    if isinstance(results, dict):
+        results.setdefault("_meta", {})
+        results["_meta"]["round_dir"] = str(rdir)
+        results["_meta"]["hopfield_dir"] = str(hop_dir)
+    return results
+
+
+# ---------------------------------------------------------------------
+# Scansione completa: lancia Hopfield su tutti i round esistenti
+# ---------------------------------------------------------------------
+def eval_hopfield_over_all_rounds(
+    run_dir: str | os.PathLike,
+    *,
+    xi_true: np.ndarray,
+    exposure_counts: Optional[np.ndarray] = None,
+    beta: float = 3.0,
+    updates: int = 30,
+    reps_per_archetype: int = 32,
+    start_overlap: float = 0.3,
+    frequency: int = 1,
+    force_run: bool = False,
+    save: bool = True,
+    stochastic: bool = True,
+) -> List[Dict[str, Any]]:
+    """
+    Esegue/ripristina la valutazione Hopfield per tutti i round trovati in `run_dir`.
+
+    Parametri
+    ---------
+    run_dir : cartella radice della run (contiene "round_XXX/")
+    frequency : 1=ogni round, n>1=ogni n round (gli altri saltati)
+    Il resto dei parametri viene passato a `eval_hopfield_for_round`.
+
+    Returns
+    -------
+    results_list : lista di dict (uno per ogni round su cui è stata eseguita/ricaricata la valutazione)
+    """
+    rdir = Path(run_dir)
+    round_dirs = list_round_dirs(rdir)
+    results_list: List[Dict[str, Any]] = []
+
+    for t, rd in enumerate(round_dirs):
+        if frequency and (t % int(frequency) != 0):
+            continue
+        J_path = rd / "J_rec.npy"
+        if not J_path.exists():
+            # se il round non ha J_rec, salta
+            continue
+        J_rec = np.load(J_path)
+        res = eval_hopfield_for_round(
+            rd,
+            J_server=J_rec,
+            xi_true=xi_true,
+            exposure_counts=exposure_counts,
+            beta=beta,
+            updates=updates,
+            reps_per_archetype=reps_per_archetype,
+            start_overlap=start_overlap,
+            force_run=force_run,
+            save=save,
+            stochastic=stochastic,
+        )
+        results_list.append(res)
+    return results_list
+
+
+# ---------------------------------------------------------------------
+# Estrazione m_{μ}(t) da file salvati
+# ---------------------------------------------------------------------
+def load_magnetization_matrix_from_run(
+    run_dir: str | os.PathLike,
+    *,
+    key_candidates: Sequence[str] = ("magnetization_by_mu", "m_by_mu", "mag_by_mu"),
+) -> Optional[np.ndarray]:
+    """
+    Legge i risultati Hopfield salvati in ciascun round e ricostruisce la matrice
+    delle magnetizzazioni per archetipo nel tempo: M (K, T_sel).
+
+    Cerca un file JSON nella cartella "round_XXX/hopfield/" che contenga almeno
+    una delle chiavi in `key_candidates`.
+
+    Returns
+    -------
+    M : ndarray (K, T_sel) oppure None se non trovati risultati coerenti.
+    """
+    rdir = Path(run_dir)
+    round_dirs = list_round_dirs(rdir)
+    # lista di array per round
+    seq: List[np.ndarray] = []
+    K_max = None
+
+    for rd in round_dirs:
+        hop_dir = rd / "hopfield"
+        if not hop_dir.exists():
+            continue
+        jsons = find_files(hop_dir, pattern="*.json", recursive=False)
+        found = None
+        for jp in jsons:
+            try:
+                obj = read_json(jp)
+            except Exception:
+                continue
+            for k in key_candidates:
+                if k in obj:
+                    arr = np.asarray(obj[k])
+                    if arr.ndim == 1:
+                        arr = arr[:, None]  # (K,) -> (K,1)
+                    if arr.ndim == 2 and arr.shape[1] != 1:
+                        # alcuni salvataggi possono avere (K, replicates) — prendi la media colonna
+                        arr = arr.mean(axis=1, keepdims=True)
+                    if K_max is None:
+                        K_max = arr.shape[0]
+                    elif arr.shape[0] != K_max:
+                        # mismatch K: skip questo file
+                        continue
+                    seq.append(arr.astype(float))
+                    found = True
+                    break
+            if found:
+                break
+
+        # Fallback: se non abbiamo trovato JSON con magnetizzazioni, prova il file NPZ
+        if not found:
+            npz_path = hop_dir / "magnetization_by_mu.npz"
+            if npz_path.exists():
+                try:
+                    loaded = np.load(npz_path)
+                    # chiavi attese: m_0, m_1, ...
+                    m_keys = sorted([k for k in loaded.files if k.startswith("m_")], key=lambda s: int(s.split("_",1)[1]))
+                    if m_keys:
+                        cols = []
+                        for mk in m_keys:
+                            v = np.asarray(loaded[mk], dtype=float)
+                            # v può essere (reps,) ⇒ media per ottenere valore round-wise
+                            if v.ndim == 1:
+                                cols.append(float(v.mean()))
+                            elif v.ndim == 2:
+                                # (reps, something) ⇒ media flatten
+                                cols.append(float(v.reshape(-1).mean()))
+                            else:
+                                cols.append(float(np.mean(v)))
+                        arr = np.asarray(cols, dtype=float)[:, None]  # (K,1)
+                        if K_max is None:
+                            K_max = arr.shape[0]
+                        elif arr.shape[0] != K_max:
+                            continue  # inconsistenza K => salta
+                        seq.append(arr)
+                except Exception:
+                    pass
+
+    if not seq:
+        return None
+    # concat column-wise per ottenere (K, T_sel)
+    M = np.concatenate(seq, axis=1)  # (K, T_sel)
+    return M
+
+
+# ---------------------------------------------------------------------
+# Backfill: costruisci e salva pi_hat_retrieval nei metrics.json esistenti
+# ---------------------------------------------------------------------
+def backfill_pi_hat_retrieval_over_run(
+    run_dir: str | os.PathLike,
+    *,
+    ema_alpha: float = 0.0,
+    reuse_previous_if_missing: bool = True,
+) -> int:
+    """
+    Calcola ˆpi_t dal retrieval Hopfield per ogni round di una run e lo salva
+    in 'round_XXX/metrics.json' come 'pi_hat_retrieval'. Restituisce il numero
+    di round aggiornati. Se un round non ha risultati Hopfield, può riusare il
+    valore precedente (se `reuse_previous_if_missing=True`).
+    """
+    rdir = Path(run_dir)
+    rounds = list_round_dirs(rdir)
+    updated = 0
+    prev_vec = None
+    for rd in rounds:
+        hop_dir = rd / "hopfield"
+        m_arr = None
+        if hop_dir.exists():
+            # 1) prova JSON
+            jsons = find_files(hop_dir, pattern="*.json", recursive=False)
+            for jp in jsons:
+                try:
+                    obj = read_json(jp)
+                except Exception:
+                    continue
+                for k in ("magnetization_by_mu", "m_by_mu", "mag_by_mu"):
+                    if k in obj:
+                        try:
+                            arr = np.asarray(obj[k])
+                            m_arr = arr
+                            break
+                        except Exception:
+                            m_arr = None
+                if m_arr is not None:
+                    break
+            # 2) fallback NPZ salvato dal runner
+            if m_arr is None:
+                npz_path = hop_dir / "magnetization_by_mu.npz"
+                if npz_path.exists():
+                    try:
+                        loaded = np.load(npz_path)
+                        m_keys = sorted([k for k in loaded.files if k.startswith("m_")], key=lambda s: int(s.split("_",1)[1]))
+                        if m_keys:
+                            cols = []
+                            for mk in m_keys:
+                                v = np.asarray(loaded[mk], dtype=float)
+                                if v.ndim == 1:
+                                    cols.append(float(v.mean()))
+                                else:
+                                    cols.append(float(v.reshape(-1).mean()))
+                            m_arr = np.asarray(cols, dtype=float)
+                    except Exception:
+                        m_arr = None
+        pi_vec = None
+        if m_arr is not None and m_arr.size > 0:
+            if m_arr.ndim == 1:
+                m_mu = m_arr.astype(float)
+            else:
+                axes = tuple(range(1, m_arr.ndim))
+                m_mu = np.mean(m_arr, axis=axes).astype(float)
+            eps = 1e-6
+            wvec = np.maximum(m_mu, eps)
+            den = float(wvec.sum()) if float(wvec.sum()) > 0 else 1.0
+            pi_vec = (wvec / den)
+            # EMA opzionale con il valore precedente (stabilizza)
+            if prev_vec is not None and ema_alpha > 0.0:
+                pi_vec = (1.0 - float(ema_alpha)) * prev_vec + float(ema_alpha) * pi_vec
+                s = float(pi_vec.sum())
+                if s > 0:
+                    pi_vec = pi_vec / s
+        elif reuse_previous_if_missing and prev_vec is not None:
+            pi_vec = prev_vec
+
+        # aggiorna metrics.json se disponibile
+        mfile = rd / "metrics.json"
+        if mfile.exists():
+            try:
+                data = read_json(mfile)
+                if pi_vec is not None:
+                    data["pi_hat_retrieval"] = [float(x) for x in pi_vec]
+                    prev_vec = pi_vec
+                else:
+                    data.setdefault("pi_hat_retrieval", None)
+                # mantieni alias data-driven se manca
+                if "pi_hat" in data and "pi_hat_data" not in data:
+                    data["pi_hat_data"] = list(data.get("pi_hat"))
+                # scrivi
+                (rd / "metrics.json").write_text(json.dumps(data, indent=2))
+                updated += 1
+            except Exception:
+                continue
+    return updated
+
+
+# ---- io.py ----
+# -*- coding: utf-8 -*-
+"""
+Utility I/O generiche per Exp-06 (single-only).
+
+- ensure_dir(path): crea directory (parents=True, exist_ok=True)
+- read_json/write_json
+- save/load NPY/NPZ
+- list_round_dirs: restituisce le cartelle round_XXX ordinate
+- find_files: glob semplice (con opzione ricorsiva)
+- atomic_write: scrittura robusta su file (rinomina atomica)
+"""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Any, Iterable, List, Optional
+
+import numpy as np
+import tempfile
+import shutil
+import fnmatch
+
+
+# ---------------------------------------------------------------------
+# Directory & file helpers
+# ---------------------------------------------------------------------
+def ensure_dir(p: str | os.PathLike) -> Path:
+    path = Path(p)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def atomic_write(path: str | os.PathLike, data: bytes, mode: str = "wb") -> None:
+    """
+    Scrive dati su file in modo atomico: scrive su un file temporaneo
+    nella stessa directory e poi rinomina.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=str(path.parent))
+    try:
+        with os.fdopen(tmp_fd, mode) as f:
+            f.write(data)
+        os.replace(tmp_path, path)
+    except Exception:
+        # ripulisce in caso di errori
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
+        raise
+
+
+# ---------------------------------------------------------------------
+# JSON
+# ---------------------------------------------------------------------
+def read_json(path: str | os.PathLike) -> Any:
+    with Path(path).open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def write_json(path: str | os.PathLike, obj: Any) -> None:
+    data = json.dumps(obj, indent=2).encode("utf-8")
+    atomic_write(path, data, mode="wb")
+
+
+# ---------------------------------------------------------------------
+# NumPy
+# ---------------------------------------------------------------------
+def save_npy(path: str | os.PathLike, arr: np.ndarray) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.save(path, arr)
+
+
+def load_npy(path: str | os.PathLike) -> np.ndarray:
+    return np.load(path)
+
+
+def save_npz(path: str | os.PathLike, **arrays) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(path, **arrays)
+
+
+def load_npz(path: str | os.PathLike) -> dict:
+    with np.load(path, allow_pickle=False) as f:
+        return {k: f[k] for k in f.files}
+
+
+# ---------------------------------------------------------------------
+# Scansione run/round
+# ---------------------------------------------------------------------
+def list_round_dirs(run_dir: str | os.PathLike) -> List[Path]:
+    """
+    Restituisce le cartelle "round_XXX" presenti in run_dir, ordinate per XXX.
+    """
+    rdir = Path(run_dir)
+    if not rdir.exists():
+        return []
+    dirs = [p for p in rdir.iterdir() if p.is_dir() and p.name.startswith("round_")]
+    # ordina per indice numerico
+    def _key(p: Path) -> int:
+        try:
+            return int(p.name.split("_")[-1])
+        except Exception:
+            return 10**9
+    return sorted(dirs, key=_key)
+
+
+def find_files(root: str | os.PathLike, pattern: str = "*", recursive: bool = False) -> List[Path]:
+    """
+    Trova file in 'root' che matchano il pattern (glob a-la fnmatch). Se recursive=True,
+    scende nelle sottodirectory.
+    """
+    root = Path(root)
+    if not root.exists():
+        return []
+    matches: List[Path] = []
+    if recursive:
+        for dirpath, _, filenames in os.walk(root):
+            for name in filenames:
+                if fnmatch.fnmatch(name, pattern):
+                    matches.append(Path(dirpath) / name)
+    else:
+        for p in root.iterdir():
+            if p.is_file() and fnmatch.fnmatch(p.name, pattern):
+                matches.append(p)
+    return matches
+
+
+# ---- metrics.py ----
+# -*- coding: utf-8 -*-
+"""
+Metriche e diagnostiche per Exp-06 (single-only).
+
+Include:
+- Stima π̂_t dai soli esempi E_t rispetto a un set di riferimenti ξ_ref
+- Distanza di TV tra π_t e π̂_t
+- K_eff wrapper (MP / shuffle) tramite funzione già definita nella codebase
+- Embedding del simplesso Δ_2 (K=3) in R^2 e stima di lag/ampiezza per drift ciclici
+- Indice di forgetting e misure di "equità" (varianza e Gini) sulle magnetizzazioni
+"""
+from __future__ import annotations
+
+from typing import Optional, Tuple, Dict, Any
+import numpy as np
+
+# riuso dalla codebase
+from src.unsup.functions import estimate_K_eff_from_J  # noqa: F401
+
+
+# ----------------------------
+# utilità generiche
+# ----------------------------
+def tv_distance(p: np.ndarray, q: np.ndarray) -> float:
+    """Total-variation distance TV(p,q) = 0.5 * ||p - q||_1."""
+    p = np.asarray(p, dtype=float)
+    q = np.asarray(q, dtype=float)
+    return 0.5 * float(np.sum(np.abs(p - q)))
+
+
+def gini_coefficient(x: np.ndarray) -> float:
+    """
+    Gini su vettori non negativi. Se tutti zero -> 0.
+    Restituisce un valore in [0, 1].
+    """
+    x = np.asarray(x, dtype=float)
+    if np.allclose(x, 0.0):
+        return 0.0
+    if np.any(x < 0):
+        # shift to non-negative
+        x = x - x.min()
+    if x.sum() <= 0:
+        return 0.0
+    x = np.sort(x)
+    n = x.size
+    cumx = np.cumsum(x)
+    g = (n + 1 - 2 * (cumx.sum() / cumx[-1])) / n
+    return float(g)
+
+
+# ----------------------------
+# π̂_t stimato dagli esempi (classificatore su ξ_ref)
+# ----------------------------
+def estimate_pi_hat_from_examples(xi_ref: np.ndarray, E_t: np.ndarray) -> np.ndarray:
+    """
+    Classifica ogni esempio in E_t sul set di riferimenti xi_ref per overlapping massimo.
+    Restituisce π̂_t = frequenze normalizzate. Robusto anche se xi_ref ha S>=K pattern: usa i primi K.
+
+    Parametri
+    ---------
+    xi_ref : (S, N) pattern di riferimento (binarizzati in {±1})
+    E_t    : (L, M_c, N) esempi del round t
+
+    Returns
+    -------
+    pi_hat : (K,) float64
+    """
+    L, M_c, N = E_t.shape
+    S = xi_ref.shape[0]
+    K = min(S, max(1, S))  # in pratica S==K, ma restiamo robusti
+    ref = xi_ref[:K]
+    X = E_t.reshape(L * M_c, N)
+    Ov = X @ ref.T
+    mu_hat = np.argmax(Ov, axis=1)
+    counts = np.bincount(mu_hat, minlength=K).astype(float)
+    if counts.sum() <= 0:
+        return np.ones(K, dtype=float) / float(K)
+    return counts / counts.sum()
+
+
+# ----------------------------
+# K_eff wrapper (riuso codebase)
+# ----------------------------
+def keff_and_info(
+    J_KS: np.ndarray,
+    *,
+    method: str = "shuffle",
+    M_eff: Optional[int] = None,
+    data_var: Optional[float] = None,
+) -> Tuple[int, np.ndarray, Dict[str, Any]]:
+    """
+    Calcola K_eff e informazioni accessorie riusando la funzione esistente nella codebase.
+    """
+    K_eff, keep_mask, info = estimate_K_eff_from_J(J_KS, method=method, M_eff=M_eff, data_var=data_var)
+    return int(K_eff), np.asarray(keep_mask), dict(info)
+
+
+# ----------------------------
+# Embedding Δ2 -> R^2 e lag/ampiezza (K=3)
+# ----------------------------
+_TRI_VERTS = np.array([
+    [1.0, 0.0],                         # v0
+    [-0.5, np.sqrt(3.0) / 2.0],         # v1
+    [-0.5, -np.sqrt(3.0) / 2.0],        # v2
+], dtype=float)
+
+
+def simplex_embed_2d(pi: np.ndarray) -> np.ndarray:
+    """
+    Proietta un vettore π ∈ Δ2 in R^2 usando i vertici di un triangolo equilatero.
+    """
+    if pi.shape[-1] != 3:
+        raise ValueError("simplex_embed_2d richiede K=3.")
+    return pi @ _TRI_VERTS  # (2,) per singolo, (T,2) per sequenza
+
+
+def _angles_from_xy(xy: np.ndarray) -> np.ndarray:
+    """Restituisce la sequenza di angoli θ(t) = atan2(y, x) in [-π, π]."""
+    return np.arctan2(xy[..., 1], xy[..., 0])
+
+
+def _radial_distance(xy: np.ndarray) -> np.ndarray:
+    return np.linalg.norm(xy, axis=-1)
+
+
+def lag_and_amplitude(
+    pi_true_seq: np.ndarray,
+    pi_hat_seq: np.ndarray,
+) -> Dict[str, float]:
+    """
+    Stima lag (in round e in radianti) e rapporto di ampiezza tra traiettorie cicliche su Δ2 (K=3).
+    Metodo: embed in R^2, costruisci fasi θ, massimizza la correlazione tra e^{iθ_true} e e^{iθ_hat}.
+
+    Returns
+    -------
+    dict con chiavi:
+        'lag_rounds'   : int in [-T/2, T/2] circa (best shift)
+        'lag_radians'  : float in [-π, π]
+        'amp_ratio'    : float >= 0 (⟨r_hat⟩ / ⟨r_true⟩)
+    """
+    if pi_true_seq.shape != pi_hat_seq.shape:
+        raise ValueError("Sequenze π_true e π_hat devono avere stessa shape (T,3).")
+    T, K = pi_true_seq.shape
+    if K != 3:
+        raise ValueError("lag_and_amplitude supporta K=3.")
+
+    xy_true = simplex_embed_2d(pi_true_seq)  # (T,2)
+    xy_hat = simplex_embed_2d(pi_hat_seq)    # (T,2)
+
+    theta_true = _angles_from_xy(xy_true)
+    theta_hat = _angles_from_xy(xy_hat)
+
+    # phasors
+    z_true = np.exp(1j * theta_true)
+    z_hat = np.exp(1j * theta_hat)
+
+    # cross-correlation sui phasors complessi per stimare lo shift migliore
+    best_tau = 0
+    best_val = -np.inf
+    for tau in range(-T + 1, T):
+        # shift circolare
+        z_hat_shift = np.roll(z_hat, shift=tau, axis=0)
+        # usare la parte reale della correlazione (coerenza di fase)
+        val = np.real(np.vdot(z_true, z_hat_shift))  # vdot = conj(z_true)·z_hat_shift
+        if val > best_val:
+            best_val = val
+            best_tau = tau
+
+    lag_rounds = int(best_tau)
+    lag_radians = float(2.0 * np.pi * lag_rounds / float(T))
+
+    # ampiezze radiali (distanza dal baricentro)
+    r_true = _radial_distance(xy_true)
+    r_hat = _radial_distance(xy_hat)
+    # evitare divisioni per zero
+    denom = float(np.mean(r_true)) if np.mean(r_true) > 1e-8 else 1.0
+    amp_ratio = float(np.mean(r_hat) / denom)
+
+    return {
+        "lag_rounds": lag_rounds,
+        "lag_radians": lag_radians,
+        "amp_ratio": amp_ratio,
+    }
+
+
+# ----------------------------
+# Forgetting & equity
+# ----------------------------
+def forgetting_index(
+    m_by_mu_over_time: np.ndarray,  # shape (K, T)
+    exposure_mask: Optional[np.ndarray] = None,  # bool (K, T) True=alta esposizione
+) -> np.ndarray:
+    """
+    Per ciascun archetipo μ, definisce FI_μ = m_μ(t*) - m_μ(T-1),
+    dove t* è l'ultimo round con "alta esposizione" (se noto), altrimenti t* = argmax_t m_μ(t).
+
+    Returns
+    -------
+    FI : (K,) float64 (valori positivi indicano perdita rispetto all'ultimo stato "buono")
+    """
+    m = np.asarray(m_by_mu_over_time, dtype=float)
+    if m.ndim != 2:
+        raise ValueError("m_by_mu_over_time deve avere shape (K, T).")
+    K, T = m.shape
+    FI = np.zeros((K,), dtype=float)
+
+    for mu in range(K):
+        if exposure_mask is not None:
+            mask = np.asarray(exposure_mask[mu], dtype=bool)
+            if mask.size != T:
+                raise ValueError("exposure_mask dimension mismatch.")
+            idx = np.where(mask)[0]
+            if idx.size > 0:
+                t_star = int(idx.max())
+            else:
+                t_star = int(np.argmax(m[mu]))
+        else:
+            t_star = int(np.argmax(m[mu]))
+        FI[mu] = float(m[mu, t_star] - m[mu, T - 1])
+    return FI
+
+
+def equity_measures(values: np.ndarray) -> Dict[str, float]:
+    """
+    Misure di equità tra archetipi, per un vettore di magnetizzazioni (K,) o una matrice (K, T):
+    - varianza
+    - Gini
+
+    Se (K, T), restituisce le medie su T dei due indici.
+    """
+    x = np.asarray(values, dtype=float)
+    if x.ndim == 1:
+        var = float(np.var(x))
+        gini = float(gini_coefficient(np.clip(x, 0.0, None)))
+        return {"variance": var, "gini": gini}
+    elif x.ndim == 2:
+        K, T = x.shape
+        var_t = np.var(x, axis=0)             # (T,)
+        gini_t = np.array([gini_coefficient(np.clip(x[:, t], 0.0, None)) for t in range(T)])
+        return {"variance": float(np.mean(var_t)), "gini": float(np.mean(gini_t))}
+    else:
+        raise ValueError("values deve essere (K,) o (K, T).")
+
+
+# ----------------------------
+# Convenience: metriche round base
+# ----------------------------
+def compute_round_metrics(
+    *,
+    E_t: np.ndarray,                 # (L, M_c, N)
+    J_KS: np.ndarray,                # (N, N)
+    xi_ref_for_pi: np.ndarray,       # (S, N) ⇒ useremo i primi K come riferimenti
+    pi_true_t: np.ndarray,           # (K,)
+    method_keff: str = "shuffle",
+    M_eff: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Calcola metriche di base usate in Exp-06:
+      - π̂_t stimata dagli esempi (classificazione su ξ_ref allineati)
+      - TV(π_t, π̂_t)
+      - K_eff su J_KS (wrapper codebase)
+    """
+    pi_hat_t = estimate_pi_hat_from_examples(xi_ref_for_pi, E_t)
+    pi_true_t = np.asarray(pi_true_t, dtype=float)
+    if pi_true_t.sum() <= 0:
+        pi_true_t = np.ones_like(pi_hat_t) / float(pi_hat_t.size)
+    else:
+        pi_true_t = pi_true_t / pi_true_t.sum()
+
+    TV_t = tv_distance(pi_true_t, pi_hat_t)
+    K_eff, keep_mask, info = keff_and_info(J_KS, method=method_keff, M_eff=M_eff)
+
+    eigvals = info.get("eigvals", None)
+    return {
+        "pi_hat": pi_hat_t.tolist(),
+        "pi_true": pi_true_t.tolist(),
+        "TV_pi": float(TV_t),
+        "K_eff": int(K_eff),
+        "keff_info": {
+            "threshold": float(info.get("threshold", np.nan)),
+            "method": str(info.get("method", method_keff)),
+            "eigvals": eigvals.tolist() if isinstance(eigvals, np.ndarray) else None,
+        },
+    }
+
+
+# ---- pipeline_core.py ----
+# -*- coding: utf-8 -*-
+"""
+Exp-06 (single-only) — pipeline core (dataset non strutturato).
+
+Questo modulo implementa un motore round-by-round che:
+  1) genera (o riceve) un dataset sintetico binario in {±1}, con mixing schedule pis (T,K)
+  2) per ogni round t:
+        - stima J_unsup(t) (single) e blend con memoria ebraica (J_hebb(xi_prev)) pesata da w
+        - propaga J -> J_KS (pseudo-inversa iterativa)
+        - taglio spettrale + disentangling TAM -> xi_r(t)
+        - allinea i candidati a xi_true (greedy senza SciPy) e aggiorna xi_ref (per il blend successivo)
+        - calcola metriche base (coverage, K_eff MP/shuffle, pi_hat, TV)
+        - valuta magnetizzazione Hopfield (post-hoc) su J_rec(t)
+  3) salva tutti gli artefatti in outdir/round_{t}/
+
+Requisiti: riuso dei moduli presenti in codebase.txt:
+- config.HyperParams, TAMParams, SpectralParams
+- data.new_round_single, compute_round_coverage, count_exposures
+- estimators.build_unsup_J_single, blend_with_memory
+- functions.propagate_J, estimate_K_eff_from_J
+- dynamics.eigen_cut, dis_check
+- hopfield_eval.run_or_load_hopfield_eval
+
+Nota: la costruzione del dataset supporta un mixing esplicito via `pis` (T,K).
+"""
+from __future__ import annotations
+
+from dataclasses import asdict
+from pathlib import Path
+from typing import Optional, Sequence, Tuple, Dict, Any, List
+
+import json
+import math
+import os
+import numpy as np
+
+# --- riuso dalla codebase (vedi codebase.txt) ---
+from src.unsup.config import HyperParams  # :contentReference[oaicite:1]{index=1}
+from src.unsup.data import new_round_single, compute_round_coverage, count_exposures  # :contentReference[oaicite:2]{index=2}
+from src.unsup.estimators import build_unsup_J_single, blend_with_memory  # :contentReference[oaicite:3]{index=3}
+from src.unsup.functions import propagate_J, estimate_K_eff_from_J, gen_patterns  # :contentReference[oaicite:4]{index=4}
+from src.unsup.dynamics import dis_check  # :contentReference[oaicite:5]{index=5}
+from src.unsup.spectrum import estimate_keff as _estimate_keff_spectrum
+from src.unsup.hopfield_eval import run_or_load_hopfield_eval  # :contentReference[oaicite:6]{index=6}
+from .control import (
+    compute_drift_signals,
+    update_w_threshold,
+    update_w_sigmoid,
+    update_w_pctrl,
+)
+from .metrics import lag_and_amplitude, simplex_embed_2d
+
+
+# ----------------------------
+# utilità I/O
+# ----------------------------
+def _ensure_dir(p: str | os.PathLike) -> Path:
+    path = Path(p)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _save_json(p: Path, obj: Dict[str, Any]) -> None:
+    p.write_text(json.dumps(obj, indent=2))
+
+
+# ----------------------------
+# helper: allineamento greedy
+# ----------------------------
+def _align_greedy_sign(xi_r: np.ndarray, xi_true: np.ndarray) -> Tuple[np.ndarray, Dict[int, int]]:
+    """
+    Allinea i candidati xi_r ai veri archetipi xi_true massimizzando l'overlap assoluto
+    con una procedura greedy (evita dipendenze SciPy). Applica anche il flip di segno.
+
+    Returns
+    -------
+    xi_aligned : (R, N)
+    match      : dict idx_r -> mu_true
+    """
+    if xi_r.size == 0:
+        return xi_r, {}
+    R, N = xi_r.shape
+    K = xi_true.shape[0]
+    S = np.abs(xi_r @ xi_true.T) / float(N)  # (R, K)
+    S = S.copy()
+    used_r = set()
+    used_mu = set()
+    match: Dict[int, int] = {}
+
+    while len(used_r) < min(R, K):
+        # trova il massimo residuo
+        idx = np.unravel_index(np.argmax(S, axis=None), S.shape)
+        r, mu = int(idx[0]), int(idx[1])
+        if r in used_r or mu in used_mu:
+            # invalida la cella e continua
+            S[r, mu] = -np.inf
+            continue
+        # firma: se <xi_r, xi_true[mu]> < 0 => flip segno
+        if float(np.dot(xi_r[r], xi_true[mu])) < 0.0:
+            xi_r[r] = -xi_r[r]
+        match[r] = mu
+        used_r.add(r)
+        used_mu.add(mu)
+        # invalida r e mu
+        S[r, :] = -np.inf
+        S[:, mu] = -np.inf
+
+    return xi_r, match
+
+
+# ----------------------------
+# helper: stima pi_hat da esempi
+# ----------------------------
+def _estimate_pi_hat_from_examples(xi_ref: np.ndarray, E_t: np.ndarray) -> np.ndarray:
+    """
+    Classifica ogni esempio in E_t sul set di riferimenti xi_ref per overlapping massimo
+    e restituisce le frequenze normalizzate (pi_hat) su K archetipi.
+
+    E_t : (L, M_c, N)  ;  xi_ref : (S, N) con S>=K (useremo solo i migliori K se S>K)
+    """
+    L, M_c, N = E_t.shape
+    S = xi_ref.shape[0]
+    # se S > K, prendiamo i K primi (l'ordine è già 'promosso' dal pruning/greedy)
+    K = min(S,  max(1, S))
+    ref = xi_ref[:K]  # (K, N)
+    X = E_t.reshape(L * M_c, N)  # (LM, N)
+    # overlaps (LM, K)
+    Ov = X @ ref.T
+    mu_hat = np.argmax(Ov, axis=1)
+    counts = np.bincount(mu_hat, minlength=K).astype(float)
+    if counts.sum() <= 0:
+        return np.ones(K, dtype=float) / float(K)
+    return counts / counts.sum()
+
+
+# ----------------------------
+# helper: generatore ETA con schedule pis
+# ----------------------------
+def _gen_dataset_with_schedule(
+    xi_true: np.ndarray,
+    pis: np.ndarray,   # (T, K)
+    M_total: int,
+    r_ex: float,
+    L: int,
+    rng: np.random.Generator,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Genera ETA, labels in SINGLE-mode rispettando la mixing-schedule pis per round.
+
+    Returns
+    -------
+    ETA    : (L, T, M_c, N) in float32
+    labels : (L, T, M_c)    in int32
+    """
+    T, K = pis.shape
+    N = xi_true.shape[1]
+    M_c = int(math.ceil(M_total / float(L * T)))
+    ETA = np.zeros((L, T, M_c, N), dtype=np.float32)
+    labels = np.zeros((L, T, M_c), dtype=np.int32)
+    p_keep = 0.5 * (1.0 + float(r_ex))
+
+    for t in range(T):
+        pi_t = np.asarray(pis[t], dtype=float)
+        pi_t = np.maximum(pi_t, 0.0)
+        if pi_t.sum() <= 0:
+            pi_t = np.ones(K, dtype=float) / float(K)
+        else:
+            pi_t = pi_t / pi_t.sum()
+
+        for l in range(L):
+            mus = rng.choice(K, size=M_c, replace=True, p=pi_t).astype(int)
+            probs = rng.uniform(size=(M_c, N))
+            chi = np.where(probs <= p_keep, 1.0, -1.0).astype(np.float32)
+            xi_sel = xi_true[mus].astype(np.float32)  # (M_c, N)
+            ETA[l, t] = (chi * xi_sel).astype(np.float32)
+            labels[l, t] = mus.astype(np.int32)
+
+    return ETA, labels
+
+
+# ----------------------------
+# main: run_seed_synth
+# ----------------------------
+def run_seed_synth(
+    hp: HyperParams,
+    seed: int,
+    *,
+    outdir: str,
+    pis: Optional[np.ndarray] = None,           # (T,K) mixing schedule; se None => uniforme
+    xi_true: Optional[np.ndarray] = None,       # (K,N); se None => gen_patterns
+    eval_hopfield_every: int = 1,               # 1=ogni round, 0=disabilitato, n>1 = ogni n round
+    # --- controllo w ---
+    w_policy: str = "pctrl",                    # {fixed, threshold, sigmoid, pctrl}
+    w_init: Optional[float] = None,             # default: hp.w se None
+    w_min: float = 0.05,
+    w_max: float = 0.95,
+    alpha_w: float = 0.3,
+    a_drift: float = 0.5,
+    b_mismatch: float = 1.0,
+    # policy A
+    theta_low: float = 0.05,
+    theta_high: float = 0.15,
+    delta_up: float = 0.10,
+    delta_down: float = 0.05,
+    # policy B
+    theta_mid: float = 0.12,
+    beta: float = 10.0,
+    # policy C
+    lag_target: float = 0.3,
+    lag_window: int = 8,
+    kp: float = 0.8,
+    ki: float = 0.0,
+    kd: float = 0.0,
+    gate_drift_theta: Optional[float] = None,
+) -> Dict[str, Any]:
+    """
+    Esegue Exp-06 (single-only) su dataset sintetico.
+
+    Parametri
+    ---------
+    hp : HyperParams
+    seed : int
+    outdir : directory dove salvare artefatti
+    pis : opzionale (T,K)  mixing schedule
+    xi_true : opzionale (K,N) archetipi binari
+    eval_hopfield_every : frequenza valutazioni Hopfield (1=ogni round)
+
+    Returns
+    -------
+    summary : dict con percorsi, metriche globali e set di artefatti creati.
+    """
+    rng = np.random.default_rng(int(hp.seed_base + seed))
+    out = _ensure_dir(outdir)
+    _save_json(out / "hyperparams.json", asdict(hp))
+
+    # archetipi veri
+    if xi_true is None:
+        xi_true = np.asarray(gen_patterns(hp.N, hp.K), dtype=int)  # (K,N)  :contentReference[oaicite:7]{index=7}
+    else:
+        assert xi_true.shape == (hp.K, hp.N), "xi_true deve essere (K,N) coerente con hp."
+
+    # mixing schedule
+    T = int(hp.n_batch)
+    if pis is None:
+        pis = np.ones((T, hp.K), dtype=float) / float(hp.K)
+
+    # dataset round-wise
+    ETA, labels = _gen_dataset_with_schedule(
+        xi_true=xi_true,
+        pis=pis,
+        M_total=hp.M_total,
+        r_ex=hp.r_ex,
+        L=hp.L,
+        rng=rng,
+    )
+    np.save(out / "xi_true.npy", xi_true.astype(np.int8))
+    np.save(out / "ETA.shape.npy", np.array(ETA.shape, dtype=int))
+    np.save(out / "labels.npy", labels.astype(np.int16))
+    np.save(out / "pis.npy", pis.astype(np.float32))
+
+    # esposizioni globali (per correlazione Hopfield)
+    exposure = count_exposures(labels, K=hp.K)  # :contentReference[oaicite:8]{index=8}
+    np.save(out / "exposure_counts.npy", exposure.astype(np.int32))
+
+    # stato per il blend
+    xi_ref_prev: Optional[np.ndarray] = None
+    # controllo w: stato corrente e serie per logging
+    w_curr: float = float(hp.w if w_init is None else w_init)
+    w_series: List[float] = []
+    drift_series: List[Tuple[float, float, float]] = []  # (D_t, M_t, S_t)
+    # sequenze per lag |phi| (solo K=3)
+    pi_data_hist: List[np.ndarray] = []
+    pi_mem_hist: List[np.ndarray] = []
+    lag_abs_hist: List[float] = []
+    # memorizza per drift
+    pi_data_prev: Optional[np.ndarray] = None
+    pi_mem_prev: Optional[np.ndarray] = None
+
+    all_rounds = []
+    for t in range(T):
+        rdir = _ensure_dir(out / f"round_{t:03d}")
+        E_t = new_round_single(ETA, t)  # (L, M_c, N)  :contentReference[oaicite:9]{index=9}
+        cov_t = float(compute_round_coverage(labels[:, t, :], K=hp.K))  # :contentReference[oaicite:10]{index=10}
+
+        # stima unsup + blend single
+        J_unsup, M_eff = build_unsup_J_single(E_t, K=hp.K)  # :contentReference[oaicite:11]{index=11}
+        J_rec = blend_with_memory(J_unsup, xi_prev=xi_ref_prev, w=float(np.clip(w_curr, 0.0, 1.0)))  # :contentReference[oaicite:12]{index=12}
+        np.save(rdir / "J_unsup.npy", J_unsup.astype(np.float32))
+        np.save(rdir / "J_rec.npy", J_rec.astype(np.float32))
+
+        # propagazione + cut spettrale
+        J_KS = propagate_J(J_rec, iters=hp.prop.iters, eps=hp.prop.eps, tol=1e-8)  # :contentReference[oaicite:13]{index=13}
+        np.save(rdir / "J_KS.npy", J_KS.astype(np.float32))
+
+        # Selezione autovettori per TAM: preferisci K_eff (shuffle/MP),
+        # con fallback a top-K se la soglia fissa restituirebbe < K vettori.
+        try:
+            # 1) eigendecomp ordinata (decrescente)
+            evals, evecs = np.linalg.eigh((J_KS + J_KS.T) * 0.5)
+            order = np.argsort(evals)[::-1]
+            evals_desc = evals[order]
+            evecs_desc = evecs[:, order]
+
+            # 2) stima K_eff coerente con i report
+            K_eff_est, keep_mask_keff, _info = _estimate_keff_spectrum(J_KS, method=hp.estimate_keff_method, M_eff=M_eff)
+            keep_mask_keff = np.asarray(keep_mask_keff, dtype=bool).reshape(-1)
+            keff_threshold = float(_info.get("threshold", np.nan)) if isinstance(_info, dict) else float("nan")
+            # 2b) maschera da soglia fissa tau (per robustezza/back-compat)
+            keep_mask_tau = evals_desc > float(hp.spec.tau)
+
+            # 3) costruisci maschera finale: almeno K autovettori
+            K_target = int(max(1, hp.K))
+            if keep_mask_keff.size != evals_desc.size:
+                # fallback di sicurezza su top-K
+                keep_idx = np.arange(min(K_target, evals_desc.size))
+            else:
+                union_mask = np.logical_or(keep_mask_keff, keep_mask_tau)
+                n_union = int(np.sum(union_mask))
+                if n_union >= K_target:
+                    keep_idx = np.where(union_mask)[0]
+                else:
+                    # integra top‑K per garantire almeno K componenti
+                    base = list(np.where(union_mask)[0])
+                    extra = [i for i in range(evals_desc.size) if i not in base][:max(0, K_target - n_union)]
+                    keep_idx = np.array(base + extra, dtype=int)
+            # Limita a massimo K componenti (in ordine di importanza spettrale)
+            if keep_idx.size > K_target:
+                keep_idx = keep_idx[:K_target]
+
+            V = evecs_desc[:, keep_idx].T.astype(np.float32)
+            vals_sel = evals_desc[keep_idx].astype(np.float32)
+            eig_sel_info = {
+                "K_eff_est": int(K_eff_est),
+                "keff_threshold": keff_threshold,
+                "tau": float(hp.spec.tau),
+                "n_keff_mask": int(np.sum(keep_mask_keff)) if keep_mask_keff.size == evals_desc.size else None,
+                "n_tau_mask": int(np.sum(keep_mask_tau)),
+                "n_final": int(V.shape[0]),
+            }
+        except Exception:
+            # Ultimo fallback: usa tutti gli autovettori (potrebbe essere costoso ma robusto)
+            evals, evecs = np.linalg.eigh((J_KS + J_KS.T) * 0.5)
+            order = np.argsort(evals)[::-1]
+            evals_desc = evals[order]
+            evecs_desc = evecs[:, order]
+            keep_idx = np.arange(min(int(hp.K), evals_desc.size))
+            V = evecs_desc[:, keep_idx].T.astype(np.float32)
+            vals_sel = evals_desc[keep_idx].astype(np.float32)
+            eig_sel_info = {
+                "K_eff_est": None,
+                "keff_threshold": None,
+                "tau": float(hp.spec.tau),
+                "n_keff_mask": None,
+                "n_tau_mask": int(np.sum(evals_desc > float(hp.spec.tau))),
+                "n_final": int(V.shape[0]),
+            }
+
+        np.save(rdir / "eigs_sel.npy", vals_sel)
+        np.save(rdir / "V_sel.npy", V)
+
+        # disentangling TAM + pruning
+        xi_r, m = dis_check(
+            V, K=hp.K, L=hp.L,
+            J_rec=J_rec, JKS_iter=J_KS,
+            xi_true=xi_true,
+            tam=hp.tam, spec=hp.spec,
+            show_progress=hp.use_tqdm,
+        )  # :contentReference[oaicite:15]{index=15}
+        np.save(rdir / "xi_r.npy", xi_r.astype(np.int8))
+        np.save(rdir / "mag_pruning.npy", m.astype(np.float32))
+
+        # allineamento greedy + update memoria
+        xi_aligned, match = _align_greedy_sign(xi_r.copy(), xi_true)
+        xi_ref_prev = xi_aligned.copy() if xi_aligned.size else xi_ref_prev
+        np.save(rdir / "xi_aligned.npy", xi_aligned.astype(np.int8))
+        _save_json(rdir / "match.json", {str(k): int(v) for k, v in match.items()})
+
+        # stima K_eff
+        K_eff, keep_mask, info = estimate_K_eff_from_J(
+            J_KS, method=hp.estimate_keff_method, M_eff=M_eff
+        )  # :contentReference[oaicite:16]{index=16}
+
+        # stima pi_hat e TV vs pi_t
+        try:
+            # Use the ground-truth references `xi_true` to estimate pi_hat so the
+            # returned vector always has length K (hp.K). Using `xi_aligned` can
+            # produce a shorter vector when pruning/disentangling removes some
+            # references, which breaks downstream code that expects shape (K,).
+            pi_hat = _estimate_pi_hat_from_examples(xi_ref=xi_true, E_t=E_t)
+        except Exception:
+            pi_hat = np.ones(hp.K) / float(hp.K)
+        pi_t = pis[t] / float(np.sum(pis[t])) if np.sum(pis[t]) > 0 else np.ones(hp.K) / float(hp.K)
+        TV_t = 0.5 * float(np.sum(np.abs(pi_hat - pi_t)))
+
+        # metriche round (iniziali)
+        metrics_t = {
+            "coverage": cov_t,
+            "K_eff": int(K_eff),
+            "M_eff": int(M_eff),
+            "n_eigs_sel": int(V.shape[0]),
+            "eig_selection": eig_sel_info,
+            "TV_pi": TV_t,
+            # Mantieni la stima data-driven e anche sotto alias esplicito
+            "pi_hat": pi_hat.tolist(),
+            "pi_hat_data": pi_hat.tolist(),
+            "pi_true": pi_t.tolist(),
+        }
+        all_rounds.append(metrics_t)
+
+        # valutazione Hopfield (facoltativa) e costruzione di pi_hat_retrieval
+        pi_hat_retrieval_vec = None
+        if eval_hopfield_every and ((t % int(eval_hopfield_every)) == 0):
+            # Don't pre-create the directory; let run_or_load_hopfield_eval decide
+            hop_dir = rdir / "hopfield"
+            try:
+                results_h = run_or_load_hopfield_eval(
+                    output_dir=str(hop_dir),
+                    J_server=J_rec,
+                    xi_true=xi_true,
+                    exposure_counts=exposure,
+                    beta=3.0, updates=30, reps_per_archetype=32, start_overlap=0.3,
+                    force_run=True, save=True, stochastic=True,
+                )  # :contentReference[oaicite:17]{index=17}
+            except Exception:
+                results_h = None
+
+            # Se il runner non restituisce un dict, prova a leggere un JSON salvato su disco
+            if not isinstance(results_h, dict):
+                try:
+                    json_files = sorted([p for p in hop_dir.glob("*.json") if p.is_file()],
+                                        key=lambda p: p.stat().st_mtime, reverse=True)
+                    for jp in json_files:
+                        try:
+                            obj = json.loads(jp.read_text(encoding="utf-8"))
+                        except Exception:
+                            continue
+                        if any(k in obj for k in ("magnetization_by_mu", "m_by_mu", "mag_by_mu")):
+                            results_h = obj
+                            break
+                except Exception:
+                    pass
+
+            # Estrai magnetizzazioni by-mu e mappa su simplesso
+            m_arr = None
+            if isinstance(results_h, dict):
+                for k in ("magnetization_by_mu", "m_by_mu", "mag_by_mu"):
+                    if k in results_h:
+                        try:
+                            m_arr = np.asarray(results_h[k])
+                            break
+                        except Exception:
+                            m_arr = None
+            # Fallback: file NPZ salvato dal runner
+            if m_arr is None:
+                npz_path = hop_dir / "magnetization_by_mu.npz"
+                if npz_path.exists():
+                    try:
+                        loaded = np.load(npz_path)
+                        # chiavi attese: m_0, m_1, ...
+                        m_keys = sorted([k for k in loaded.files if k.startswith("m_")], key=lambda s: int(s.split("_",1)[1]))
+                        if m_keys:
+                            cols = []
+                            for mk in m_keys:
+                                v = np.asarray(loaded[mk], dtype=float)
+                                if v.ndim == 1:
+                                    cols.append(float(v.mean()))
+                                else:
+                                    cols.append(float(v.reshape(-1).mean()))
+                            m_arr = np.asarray(cols, dtype=float)  # (K,)
+                    except Exception:
+                        m_arr = None
+            if m_arr is not None and m_arr.size > 0:
+                if m_arr.ndim == 1:
+                    m_mu = m_arr.astype(float)
+                else:
+                    axes = tuple(range(1, m_arr.ndim))
+                    m_mu = np.mean(m_arr, axis=axes).astype(float)
+                eps = 1e-6
+                wvec = np.maximum(m_mu, eps)
+                den = float(wvec.sum()) if float(wvec.sum()) > 0 else 1.0
+                pi_hat_retrieval_vec = (wvec / den)
+
+        # Se Hopfield non è stato eseguito in questo round, prova a riusare il valore precedente (continuità)
+        if pi_hat_retrieval_vec is None:
+            try:
+                prev = rdir.parent / f"round_{t-1:03d}" / "metrics.json"
+                prev_metrics = json.loads(prev.read_text()) if (t > 0 and prev.exists()) else None
+            except Exception:
+                prev_metrics = None
+            if isinstance(prev_metrics, dict) and isinstance(prev_metrics.get("pi_hat_retrieval", None), list):
+                try:
+                    arr = np.asarray(prev_metrics["pi_hat_retrieval"], dtype=float)
+                    if arr.shape == (hp.K,):
+                        pi_hat_retrieval_vec = arr
+                except Exception:
+                    pass
+
+        metrics_t["pi_hat_retrieval"] = (
+            pi_hat_retrieval_vec.tolist() if isinstance(pi_hat_retrieval_vec, np.ndarray) else None
+        )
+
+        # --- segnali di drift & controllo w ---
+        try:
+            drift = compute_drift_signals(
+                pi_data_t=pi_t,
+                pi_data_tm1=pi_data_prev,
+                pi_mem_tm1=pi_mem_prev,
+                a=float(a_drift), b=float(b_mismatch),
+            )
+            D_t, M_t, S_t = float(drift["D_t"]), float(drift["M_t"]), float(drift["S_t"])
+        except Exception:
+            D_t = M_t = S_t = 0.0
+
+        # lag |phi| su finestra scorrevole (K=3)
+        lag_abs_rad = None
+        try:
+            # pi_mem corrente: se disponibile la retrieval, altrimenti mantieni prev
+            pi_mem_curr = None
+            if isinstance(pi_hat_retrieval_vec, np.ndarray) and pi_hat_retrieval_vec.shape == (hp.K,):
+                pi_mem_curr = pi_hat_retrieval_vec
+            elif isinstance(pi_mem_prev, np.ndarray):
+                pi_mem_curr = pi_mem_prev
+
+            if pi_mem_curr is not None:
+                pi_data_hist.append(np.asarray(pi_t, dtype=float))
+                pi_mem_hist.append(np.asarray(pi_mem_curr, dtype=float))
+                # finestra ultimi W punti
+                W = int(max(1, lag_window))
+                if len(pi_data_hist) >= 2 and hp.K == 3:
+                    d_win = np.stack(pi_data_hist[-W:], axis=0)
+                    m_win = np.stack(pi_mem_hist[-W:], axis=0)
+                    la = lag_and_amplitude(d_win, m_win)
+                    lag_abs_rad = float(abs(la.get("lag_radians", 0.0)))
+                elif hp.K == 3 and pi_mem_curr is not None:
+                    # stima istantanea via differenza di fase su embed 2D
+                    xyd = simplex_embed_2d(np.asarray(pi_t, dtype=float))
+                    xym = simplex_embed_2d(np.asarray(pi_mem_curr, dtype=float))
+                    th_d = float(np.arctan2(xyd[1], xyd[0]))
+                    th_m = float(np.arctan2(xym[1], xym[0]))
+                    dphi = float(th_d - th_m)
+                    # porta in [-pi, pi]
+                    dphi = (dphi + np.pi) % (2.0 * np.pi) - np.pi
+                    lag_abs_rad = float(abs(dphi))
+        except Exception:
+            lag_abs_rad = None
+
+        if lag_abs_rad is not None:
+            lag_abs_hist.append(float(lag_abs_rad))
+        lag_series = np.asarray(lag_abs_hist[-int(max(1, lag_window)):], dtype=float)
+
+        # aggiorna w per round successivo
+        w_next = float(w_curr)
+        pol = (w_policy or "pctrl").lower().strip()
+        try:
+            if pol == "fixed":
+                w_next = float(hp.w if w_init is None else w_init)
+            elif pol == "threshold":
+                w_next = update_w_threshold(
+                    w_prev=float(w_curr), D_t=D_t, M_t=M_t, S_t=S_t,
+                    w_min=float(w_min), w_max=float(w_max),
+                    theta_low=float(theta_low), theta_high=float(theta_high),
+                    delta_up=float(delta_up), delta_down=float(delta_down),
+                    alpha_w=float(alpha_w),
+                )
+            elif pol == "sigmoid":
+                w_next = update_w_sigmoid(
+                    w_prev=float(w_curr), D_t=D_t, M_t=M_t, S_t=S_t,
+                    w_min=float(w_min), w_max=float(w_max),
+                    theta_mid=float(theta_mid), beta=float(beta),
+                    alpha_w=float(alpha_w),
+                )
+            else:  # pctrl (default)
+                w_next = update_w_pctrl(
+                    w_prev=float(w_curr),
+                    lag_series_radians=lag_series,
+                    lag_target=float(lag_target),
+                    w_min=float(w_min), w_max=float(w_max),
+                    kp=float(kp), ki=float(ki), kd=float(kd),
+                    alpha_w=float(alpha_w),
+                    gate_S_t=gate_drift_theta if gate_drift_theta is not None else None,
+                    S_t=S_t,
+                )
+        except Exception:
+            # in caso di problemi, mantieni w corrente
+            w_next = float(np.clip(w_curr, float(w_min), float(w_max)))
+
+        # logging aggiuntivo
+        metrics_t["w"] = float(w_next)
+        metrics_t["D_t"] = float(D_t)
+        metrics_t["M_t"] = float(M_t)
+        metrics_t["S_t"] = float(S_t)
+        if lag_abs_rad is not None:
+            metrics_t["lag_abs_rad"] = float(lag_abs_rad)
+        metrics_t["controller"] = {
+            "policy": pol,
+            "params": {
+                "alpha_w": float(alpha_w),
+                "w_min": float(w_min),
+                "w_max": float(w_max),
+                "a": float(a_drift),
+                "b": float(b_mismatch),
+                "theta_low": float(theta_low),
+                "theta_high": float(theta_high),
+                "delta_up": float(delta_up),
+                "delta_down": float(delta_down),
+                "theta_mid": float(theta_mid),
+                "beta": float(beta),
+                "lag_target": float(lag_target),
+                "lag_window": int(lag_window),
+                "kp": float(kp), "ki": float(ki), "kd": float(kd),
+                "gate_drift_theta": None if gate_drift_theta is None else float(gate_drift_theta),
+            }
+        }
+
+        _save_json(rdir / "metrics.json", metrics_t)
+
+        # persist serie round-wise
+        w_series.append(float(w_next))
+        drift_series.append((float(D_t), float(M_t), float(S_t)))
+        results_dir = _ensure_dir(out / "results")
+        try:
+            np.save(results_dir / "w_series.npy", np.asarray(w_series, dtype=np.float32))
+            np.save(results_dir / "drift_series.npy", np.asarray(drift_series, dtype=np.float32))
+        except Exception:
+            pass
+
+        # aggiorna stato per round successivo
+        w_curr = float(w_next)
+        pi_data_prev = np.asarray(pi_t, dtype=float)
+        if isinstance(pi_hat_retrieval_vec, np.ndarray):
+            pi_mem_prev = np.asarray(pi_hat_retrieval_vec, dtype=float)
+        # altrimenti lascia il precedente
+
+    summary = {
+        "outdir": str(out),
+        "seed": int(seed),
+        "hp": asdict(hp),
+        "rounds": all_rounds,
+        "exposure_counts": exposure.tolist(),
+    }
+    _save_json(out / "summary.json", summary)
+    return summary
+
+
+# ---- pipeline_fmnist.py ----
+# -*- coding: utf-8 -*-
+"""
+Exp-06 (single-only) — pipeline FMNIST (dataset strutturato).
+
+Questa pipeline riprende lo schema di `pipeline_core` ma opera su immagini già
+fornite come array NumPy (niente dipendenze esterne). Le immagini sono binarizzate
+in {±1} e appiattite in vettori di dimensione N. Gli archetipi ξ_true (K,N)
+sono ottenuti per classe con `sign(mean_per_class)` (opzione "medoid" non richiede
+dipendenze: omessa per semplicità, si può aggiungere in seguito).
+
+Input principale:
+  - (X, y): immagini e label (interi) già caricati dal chiamante
+  - classes: tripletta di classi FMNIST da usare (K=3)
+  - pis: mixing schedule (T,K)
+Il resto è identico: stima J_unsup (single), blend w, propagate, eigen_cut,
+disentangling TAM, allineamento, metriche, Hopfield round-wise.
+
+Riuso moduli dalla codebase (vedi codebase.txt).
+"""
+from __future__ import annotations
+
+from dataclasses import asdict
+from pathlib import Path
+from typing import Optional, Sequence, Tuple, Dict, Any, List
+
+import json
+import math
+import os
+import numpy as np
+
+# --- riuso dalla codebase (vedi codebase.txt) ---
+from src.unsup.config import HyperParams  # :contentReference[oaicite:18]{index=18}
+from src.unsup.data import new_round_single, compute_round_coverage, count_exposures  # :contentReference[oaicite:19]{index=19}
+from src.unsup.estimators import build_unsup_J_single, blend_with_memory  # :contentReference[oaicite:20]{index=20}
+from src.unsup.functions import propagate_J, estimate_K_eff_from_J  # :contentReference[oaicite:21]{index=21}
+from src.unsup.dynamics import eigen_cut, dis_check  # :contentReference[oaicite:22]{index=22}
+from src.unsup.hopfield_eval import run_or_load_hopfield_eval  # :contentReference[oaicite:23]{index=23}
+from .control import (
+    compute_drift_signals,
+    update_w_threshold,
+    update_w_sigmoid,
+    update_w_pctrl,
+)
+from .metrics import lag_and_amplitude, simplex_embed_2d
+
+
+# ----------------------------
+# utilità I/O
+# ----------------------------
+def _ensure_dir(p: str | os.PathLike) -> Path:
+    path = Path(p)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _save_json(p: Path, obj: Dict[str, Any]) -> None:
+    p.write_text(json.dumps(obj, indent=2))
+
+
+# ----------------------------
+# helper: binarizzazione e archetipi
+# ----------------------------
+def _binarize_pm1(X: np.ndarray, thresh: Optional[float] = None) -> np.ndarray:
+    """
+    Binarizza immagini in {±1}. Se thresh è None, usa la mediana globale di X.
+    X può essere (N_img, H, W) o (N_img, D).
+    """
+    Xf = X.astype(np.float32)
+    if Xf.ndim == 3:
+        n, h, w = Xf.shape
+        Xf = Xf.reshape(n, h * w)
+    if thresh is None:
+        thresh = float(np.median(Xf))
+    return np.where(Xf > thresh, 1.0, -1.0).astype(np.float32)
+
+
+def _make_xi_true_from_classes(X_pm1: np.ndarray, y: np.ndarray, classes: Sequence[int]) -> np.ndarray:
+    """
+    Costruisce archetipi ξ_true (K,N) come sign(mean_per_class) sulle immagini binarizzate.
+    """
+    K = len(classes)
+    xi_true = []
+    for c in classes:
+        idx = np.where(y == c)[0]
+        if idx.size == 0:
+            raise ValueError(f"Nessuna immagine per classe {c}.")
+        m = np.mean(X_pm1[idx], axis=0)  # (N,)
+        xi_true.append(np.where(m >= 0.0, 1, -1).astype(int))
+    return np.stack(xi_true, axis=0)  # (K, N)
+
+
+# ----------------------------
+# helper: dataset round-wise con schedule pis
+# ----------------------------
+def _build_eta_from_images(
+    X_pm1: np.ndarray, y: np.ndarray, classes: Sequence[int],
+    pis: np.ndarray, M_total: int, L: int, rng: np.random.Generator
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Genera ETA, labels scegliendo immagini reali dalle classi richieste secondo pis(t).
+    Ritorna:
+      ETA    : (L, T, M_c, N)
+      labels : (L, T, M_c)
+    """
+    T, K = pis.shape
+    N = X_pm1.shape[1]
+    M_c = int(math.ceil(M_total / float(L * T)))
+    ETA = np.zeros((L, T, M_c, N), dtype=np.float32)
+    labels = np.zeros((L, T, M_c), dtype=np.int32)
+
+    # indici per classe (nella stessa order di 'classes')
+    idx_by_class = [np.where(y == c)[0] for c in classes]
+    for k, idx in enumerate(idx_by_class):
+        if idx.size == 0:
+            raise ValueError(f"Nessuna immagine disponibile per la classe {classes[k]}.")
+
+    for t in range(T):
+        pi_t = np.asarray(pis[t], dtype=float)
+        pi_t = np.maximum(pi_t, 0.0)
+        if pi_t.sum() <= 0:
+            pi_t = np.ones(K, dtype=float) / float(K)
+        else:
+            pi_t = pi_t / pi_t.sum()
+
+        for l in range(L):
+            # campiona classi secondo pi_t
+            ks = rng.choice(K, size=M_c, p=pi_t).astype(int)  # (M_c,)
+            mus = ks  # mappa 0..K-1 direttamente alle classi scelte
+            labels[l, t] = mus.astype(np.int32)
+            # per ogni esempio, scegli immagine casuale della classe corrispondente
+            for m in range(M_c):
+                k = int(ks[m])
+                pool = idx_by_class[k]
+                j = int(rng.integers(low=0, high=pool.size))
+                ETA[l, t, m] = X_pm1[pool[j]]
+    return ETA, labels
+
+
+# ----------------------------
+# helper: allineamento greedy + pi_hat
+# ----------------------------
+def _align_greedy_sign(xi_r: np.ndarray, xi_true: np.ndarray):
+    if xi_r.size == 0:
+        return xi_r, {}
+    R, N = xi_r.shape
+    K = xi_true.shape[0]
+    S = np.abs(xi_r @ xi_true.T) / float(N)
+    S = S.copy()
+    used_r, used_mu = set(), set()
+    match: Dict[int, int] = {}
+    while len(used_r) < min(R, K):
+        r, mu = np.unravel_index(np.argmax(S, axis=None), S.shape)
+        r, mu = int(r), int(mu)
+        if r in used_r or mu in used_mu:
+            S[r, mu] = -np.inf
+            continue
+        if float(np.dot(xi_r[r], xi_true[mu])) < 0.0:
+            xi_r[r] = -xi_r[r]
+        match[r] = mu
+        used_r.add(r); used_mu.add(mu)
+        S[r, :] = -np.inf; S[:, mu] = -np.inf
+    return xi_r, match
+
+
+def _estimate_pi_hat_from_examples(xi_ref: np.ndarray, E_t: np.ndarray) -> np.ndarray:
+    L, M_c, N = E_t.shape
+    S = xi_ref
+    if S.ndim != 2:
+        raise ValueError("xi_ref deve essere (S,N).")
+    X = E_t.reshape(L * M_c, N)
+    Ov = X @ S.T
+    mu_hat = np.argmax(Ov, axis=1)
+    K = S.shape[0]
+    counts = np.bincount(mu_hat, minlength=K).astype(float)
+    if counts.sum() <= 0:
+        return np.ones(K) / float(K)
+    return counts / counts.sum()
+
+
+# ----------------------------
+# main: run_seed_fmnist
+# ----------------------------
+def run_seed_fmnist(
+    hp: HyperParams,
+    seed: int,
+    *,
+    outdir: str,
+    X: np.ndarray,
+    y: np.ndarray,
+    classes: Sequence[int] = (0, 1, 2),
+    pis: Optional[np.ndarray] = None,           # (T,K)
+    binarize_thresh: Optional[float] = None,    # None => mediana globale
+    eval_hopfield_every: int = 1,               # 1=ogni round, 0=off, n>1 => ogni n
+    # --- controllo w ---
+    w_policy: str = "pctrl",
+    w_init: Optional[float] = None,
+    w_min: float = 0.05,
+    w_max: float = 0.95,
+    alpha_w: float = 0.3,
+    a_drift: float = 0.5,
+    b_mismatch: float = 1.0,
+    # policy A
+    theta_low: float = 0.05,
+    theta_high: float = 0.15,
+    delta_up: float = 0.10,
+    delta_down: float = 0.05,
+    # policy B
+    theta_mid: float = 0.12,
+    beta: float = 10.0,
+    # policy C
+    lag_target: float = 0.3,
+    lag_window: int = 8,
+    kp: float = 0.8,
+    ki: float = 0.0,
+    kd: float = 0.0,
+    gate_drift_theta: Optional[float] = None,
+) -> Dict[str, Any]:
+    """
+    Esegue Exp-06 (single-only) su FMNIST (3 classi).
+
+    Parametri
+    ---------
+    hp, seed, outdir : come in pipeline_core
+    X, y : immagini (N_img, H, W) o (N_img, D) e label interi
+    classes : tripletta di classi da usare come archetipi (K deve essere 3)
+    pis : mixing schedule (T,K); se None => uniforme
+    binarize_thresh : soglia globale per la binarizzazione {±1} (None => mediana)
+    eval_hopfield_every : frequenza valutazioni Hopfield
+
+    Returns
+    -------
+    summary : dict
+    """
+    if len(classes) != hp.K:
+        raise ValueError(f"hp.K={hp.K} ma classes ha lunghezza {len(classes)}.")
+
+    rng = np.random.default_rng(int(hp.seed_base + seed))
+    out = _ensure_dir(outdir)
+    _save_json(out / "hyperparams.json", asdict(hp))
+    _save_json(out / "classes.json", {"classes": list(map(int, classes))})
+
+    # binarizzazione in {±1}
+    X_pm1 = _binarize_pm1(X, thresh=binarize_thresh)
+
+    # archetipi per classe (sign(mean_per_class))
+    xi_true = _make_xi_true_from_classes(X_pm1, y, classes)
+    np.save(out / "xi_true.npy", xi_true.astype(np.int8))
+
+    # mixing schedule
+    T = int(hp.n_batch)
+    if pis is None:
+        pis = np.ones((T, hp.K), dtype=float) / float(hp.K)
+    np.save(out / "pis.npy", pis.astype(np.float32))
+
+    # costruisci ETA round-wise da immagini reali
+    ETA, labels = _build_eta_from_images(
+        X_pm1=X_pm1, y=y, classes=classes,
+        pis=pis, M_total=hp.M_total, L=hp.L, rng=rng
+    )
+    np.save(out / "ETA.shape.npy", np.array(ETA.shape, dtype=int))
+    np.save(out / "labels.npy", labels.astype(np.int16))
+
+    exposure = count_exposures(labels, K=hp.K)  # :contentReference[oaicite:24]{index=24}
+    np.save(out / "exposure_counts.npy", exposure.astype(np.int32))
+
+    xi_ref_prev: Optional[np.ndarray] = None
+    # controllo w
+    w_curr: float = float(hp.w if w_init is None else w_init)
+    w_series: List[float] = []
+    drift_series: List[Tuple[float, float, float]] = []
+    pi_data_hist: List[np.ndarray] = []
+    pi_mem_hist: List[np.ndarray] = []
+    lag_abs_hist: List[float] = []
+    pi_data_prev: Optional[np.ndarray] = None
+    pi_mem_prev: Optional[np.ndarray] = None
+    all_rounds = []
+    for t in range(T):
+        rdir = _ensure_dir(out / f"round_{t:03d}")
+        E_t = new_round_single(ETA, t)  # (L, M_c, N)  :contentReference[oaicite:25]{index=25}
+        cov_t = float(compute_round_coverage(labels[:, t, :], K=hp.K))  # :contentReference[oaicite:26]{index=26}
+
+        # stima unsup + blend
+        J_unsup, M_eff = build_unsup_J_single(E_t, K=hp.K)  # :contentReference[oaicite:27]{index=27}
+        J_rec = blend_with_memory(J_unsup, xi_prev=xi_ref_prev, w=float(np.clip(w_curr, 0.0, 1.0)))  # :contentReference[oaicite:28]{index=28}
+        np.save(rdir / "J_unsup.npy", J_unsup.astype(np.float32))
+        np.save(rdir / "J_rec.npy", J_rec.astype(np.float32))
+
+        # propagazione + cut spettrale
+        J_KS = propagate_J(J_rec, iters=hp.prop.iters, eps=hp.prop.eps, tol=1e-8)  # :contentReference[oaicite:29]{index=29}
+        np.save(rdir / "J_KS.npy", J_KS.astype(np.float32))
+        vals_sel, V = eigen_cut(J_KS, tau=hp.spec.tau)  # :contentReference[oaicite:30]{index=30}
+        np.save(rdir / "eigs_sel.npy", vals_sel.astype(np.float32))
+        np.save(rdir / "V_sel.npy", V.astype(np.float32))
+
+        # disentangling TAM + pruning
+        xi_r, m = dis_check(
+            V, K=hp.K, L=hp.L,
+            J_rec=J_rec, JKS_iter=J_KS,
+            xi_true=xi_true,
+            tam=hp.tam, spec=hp.spec,
+            show_progress=hp.use_tqdm,
+        )  # :contentReference[oaicite:31]{index=31}
+        np.save(rdir / "xi_r.npy", xi_r.astype(np.int8))
+        np.save(rdir / "mag_pruning.npy", m.astype(np.float32))
+
+        # allineamento greedy + update memoria
+        xi_aligned, match = _align_greedy_sign(xi_r.copy(), xi_true)
+        xi_ref_prev = xi_aligned.copy() if xi_aligned.size else xi_ref_prev
+        np.save(rdir / "xi_aligned.npy", xi_aligned.astype(np.int8))
+        _save_json(rdir / "match.json", {str(k): int(v) for k, v in match.items()})
+
+        # stima K_eff
+        K_eff, keep_mask, info = estimate_K_eff_from_J(
+            J_KS, method=hp.estimate_keff_method, M_eff=M_eff
+        )  # :contentReference[oaicite:32]{index=32}
+
+        # stima pi_hat e TV vs pi_t
+        try:
+            # Per evitare mismatch di shape quando il pruning rimuove pattern,
+            # usa xi_true (K,N) come base per la classificazione dei campioni.
+            pi_hat = _estimate_pi_hat_from_examples(xi_ref=xi_true, E_t=E_t)
+        except Exception:
+            pi_hat = np.ones(hp.K) / float(hp.K)
+        pi_t = pis[t] / float(np.sum(pis[t])) if np.sum(pis[t]) > 0 else np.ones(hp.K) / float(hp.K)
+        TV_t = 0.5 * float(np.sum(np.abs(pi_hat - pi_t)))
+
+        metrics_t = {
+            "coverage": cov_t,
+            "K_eff": int(K_eff),
+            "M_eff": int(M_eff),
+            "n_eigs_sel": int(V.shape[0]),
+            "TV_pi": TV_t,
+            "pi_hat": pi_hat.tolist(),
+            "pi_hat_data": pi_hat.tolist(),
+            "pi_true": pi_t.tolist(),
+        }
+        all_rounds.append(metrics_t)
+
+        # valutazione Hopfield (post-hoc) + estrazione pi_hat_retrieval
+        pi_hat_retrieval_vec = None
+
+        # valutazione Hopfield (post-hoc)
+        if eval_hopfield_every and ((t % int(eval_hopfield_every)) == 0):
+            # Let run_or_load_hopfield_eval create the directory
+            hop_dir = rdir / "hopfield"
+            try:
+                results_h = run_or_load_hopfield_eval(
+                    output_dir=str(hop_dir),
+                    J_server=J_rec,
+                    xi_true=xi_true,
+                    exposure_counts=exposure,
+                    beta=3.0, updates=30, reps_per_archetype=32, start_overlap=0.3,
+                    force_run=True, save=True, stochastic=True,
+                )  # :contentReference[oaicite:33]{index=33}
+            except Exception:
+                results_h = None
+
+            # Estrai magnetizzazioni by-mu
+            m_arr = None
+            if isinstance(results_h, dict):
+                for k in ("magnetization_by_mu", "m_by_mu", "mag_by_mu"):
+                    if k in results_h:
+                        try:
+                            m_arr = np.asarray(results_h[k])
+                            break
+                        except Exception:
+                            m_arr = None
+            if m_arr is None:
+                npz_path = hop_dir / "magnetization_by_mu.npz"
+                if npz_path.exists():
+                    try:
+                        loaded = np.load(npz_path)
+                        m_keys = sorted([k for k in loaded.files if k.startswith("m_")], key=lambda s: int(s.split("_",1)[1]))
+                        if m_keys:
+                            cols = []
+                            for mk in m_keys:
+                                v = np.asarray(loaded[mk], dtype=float)
+                                if v.ndim == 1:
+                                    cols.append(float(v.mean()))
+                                else:
+                                    cols.append(float(v.reshape(-1).mean()))
+                            m_arr = np.asarray(cols, dtype=float)  # (K,)
+                    except Exception:
+                        m_arr = None
+            if m_arr is not None and m_arr.size > 0:
+                if m_arr.ndim == 1:
+                    m_mu = m_arr.astype(float)
+                else:
+                    axes = tuple(range(1, m_arr.ndim))
+                    m_mu = np.mean(m_arr, axis=axes).astype(float)
+                eps = 1e-6
+                wvec = np.maximum(m_mu, eps)
+                den = float(wvec.sum()) if float(wvec.sum()) > 0 else 1.0
+                pi_hat_retrieval_vec = (wvec / den)
+
+        # fallback retrieval = precedente
+        if pi_hat_retrieval_vec is None:
+            try:
+                prev = rdir.parent / f"round_{t-1:03d}" / "metrics.json"
+                prev_metrics = json.loads(prev.read_text()) if (t > 0 and prev.exists()) else None
+                if isinstance(prev_metrics, dict) and isinstance(prev_metrics.get("pi_hat_retrieval", None), list):
+                    arr = np.asarray(prev_metrics["pi_hat_retrieval"], dtype=float)
+                    if arr.shape == (hp.K,):
+                        pi_hat_retrieval_vec = arr
+            except Exception:
+                pass
+
+        metrics_t["pi_hat_retrieval"] = (
+            pi_hat_retrieval_vec.tolist() if isinstance(pi_hat_retrieval_vec, np.ndarray) else None
+        )
+
+        # --- segnali di drift & controllo w ---
+        try:
+            drift = compute_drift_signals(
+                pi_data_t=pi_hat,                 # stima data-driven dal round corrente
+                pi_data_tm1=pi_data_prev,
+                pi_mem_tm1=pi_mem_prev,
+                a=float(a_drift), b=float(b_mismatch),
+            )
+            D_t, M_t, S_t = float(drift["D_t"]), float(drift["M_t"]), float(drift["S_t"])
+        except Exception:
+            D_t = M_t = S_t = 0.0
+
+        # lag |phi| (se K=3)
+        lag_abs_rad = None
+        try:
+            pi_mem_curr = None
+            if isinstance(pi_hat_retrieval_vec, np.ndarray) and pi_hat_retrieval_vec.shape == (hp.K,):
+                pi_mem_curr = pi_hat_retrieval_vec
+            elif isinstance(pi_mem_prev, np.ndarray):
+                pi_mem_curr = pi_mem_prev
+
+            if pi_mem_curr is not None:
+                pi_data_hist.append(np.asarray(pi_hat, dtype=float))
+                pi_mem_hist.append(np.asarray(pi_mem_curr, dtype=float))
+                W = int(max(1, lag_window))
+                if len(pi_data_hist) >= 2 and hp.K == 3:
+                    d_win = np.stack(pi_data_hist[-W:], axis=0)
+                    m_win = np.stack(pi_mem_hist[-W:], axis=0)
+                    la = lag_and_amplitude(d_win, m_win)
+                    lag_abs_rad = float(abs(la.get("lag_radians", 0.0)))
+                elif hp.K == 3 and pi_mem_curr is not None:
+                    xyd = simplex_embed_2d(np.asarray(pi_hat, dtype=float))
+                    xym = simplex_embed_2d(np.asarray(pi_mem_curr, dtype=float))
+                    th_d = float(np.arctan2(xyd[1], xyd[0]))
+                    th_m = float(np.arctan2(xym[1], xym[0]))
+                    dphi = (th_d - th_m + np.pi) % (2.0 * np.pi) - np.pi
+                    lag_abs_rad = float(abs(dphi))
+        except Exception:
+            lag_abs_rad = None
+
+        if lag_abs_rad is not None:
+            lag_abs_hist.append(float(lag_abs_rad))
+        lag_series = np.asarray(lag_abs_hist[-int(max(1, lag_window)):], dtype=float)
+
+        # aggiorna w per round successivo
+        w_next = float(w_curr)
+        pol = (w_policy or "pctrl").lower().strip()
+        try:
+            if pol == "fixed":
+                w_next = float(hp.w if w_init is None else w_init)
+            elif pol == "threshold":
+                w_next = update_w_threshold(
+                    w_prev=float(w_curr), D_t=D_t, M_t=M_t, S_t=S_t,
+                    w_min=float(w_min), w_max=float(w_max),
+                    theta_low=float(theta_low), theta_high=float(theta_high),
+                    delta_up=float(delta_up), delta_down=float(delta_down),
+                    alpha_w=float(alpha_w),
+                )
+            elif pol == "sigmoid":
+                w_next = update_w_sigmoid(
+                    w_prev=float(w_curr), D_t=D_t, M_t=M_t, S_t=S_t,
+                    w_min=float(w_min), w_max=float(w_max),
+                    theta_mid=float(theta_mid), beta=float(beta),
+                    alpha_w=float(alpha_w),
+                )
+            else:
+                w_next = update_w_pctrl(
+                    w_prev=float(w_curr),
+                    lag_series_radians=lag_series,
+                    lag_target=float(lag_target),
+                    w_min=float(w_min), w_max=float(w_max),
+                    kp=float(kp), ki=float(ki), kd=float(kd),
+                    alpha_w=float(alpha_w),
+                    gate_S_t=gate_drift_theta if gate_drift_theta is not None else None,
+                    S_t=S_t,
+                )
+        except Exception:
+            w_next = float(np.clip(w_curr, float(w_min), float(w_max)))
+
+        metrics_t["w"] = float(w_next)
+        metrics_t["D_t"] = float(D_t)
+        metrics_t["M_t"] = float(M_t)
+        metrics_t["S_t"] = float(S_t)
+        if lag_abs_rad is not None:
+            metrics_t["lag_abs_rad"] = float(lag_abs_rad)
+        metrics_t["controller"] = {
+            "policy": pol,
+            "params": {
+                "alpha_w": float(alpha_w),
+                "w_min": float(w_min),
+                "w_max": float(w_max),
+                "a": float(a_drift),
+                "b": float(b_mismatch),
+                "theta_low": float(theta_low),
+                "theta_high": float(theta_high),
+                "delta_up": float(delta_up),
+                "delta_down": float(delta_down),
+                "theta_mid": float(theta_mid),
+                "beta": float(beta),
+                "lag_target": float(lag_target),
+                "lag_window": int(lag_window),
+                "kp": float(kp), "ki": float(ki), "kd": float(kd),
+                "gate_drift_theta": None if gate_drift_theta is None else float(gate_drift_theta),
+            }
+        }
+
+        _save_json(rdir / "metrics.json", metrics_t)
+
+        # persist serie
+        w_series.append(float(w_next))
+        drift_series.append((float(D_t), float(M_t), float(S_t)))
+        results_dir = _ensure_dir(out / "results")
+        try:
+            np.save(results_dir / "w_series.npy", np.asarray(w_series, dtype=np.float32))
+            np.save(results_dir / "drift_series.npy", np.asarray(drift_series, dtype=np.float32))
+        except Exception:
+            pass
+
+        # aggiorna stato
+        w_curr = float(w_next)
+        pi_data_prev = np.asarray(pi_hat, dtype=float)
+        if isinstance(pi_hat_retrieval_vec, np.ndarray):
+            pi_mem_prev = np.asarray(pi_hat_retrieval_vec, dtype=float)
+
+    summary = {
+        "outdir": str(out),
+        "seed": int(seed),
+        "hp": asdict(hp),
+        "classes": list(map(int, classes)),
+        "rounds": all_rounds,
+        "exposure_counts": exposure.tolist(),
+    }
+    _save_json(out / "summary.json", summary)
+    return summary
+
+
+# ---- plotting.py ----
+# -*- coding: utf-8 -*-
+"""
+Plotting per Exp-06 (single-only).
+
+Questo modulo implementa:
+1) Pannello 4× per un seed:
+   (i)  Simplesso: π_t vs π̂_t con vettori di lag annotati.
+   (ii) Timeseries magnetizzazioni Hopfield m_μ(t) (linee + bande s.e.m.).
+   (iii) Heatmap retention m_μ(t) (K×T).
+   (iv) Phase diagram locale: metriche vs w.
+
+2) Lag–Amplitude plot:
+   φ(ω) e |H(ω)| sperimentali vs w, con overlay di curve teoriche opzionali.
+
+3) Forgetting vs Plasticity (trittico):
+   per tre bucket di w (basso/intermedio/alto): (a) distanza dal baricentro nel
+   simplesso, (b) lag globale, (c) media m_μ “old vs recent”.
+
+4) Scatter “Exposure → Magnetizzazione”:
+   regressione lineare + Pearson/Spearman annotati.
+
+Tutte le funzioni accettano un oggetto Axes (quando applicabile) e restituiscono
+handles/metriche utili. Niente salvataggi impliciti: usa `fig.savefig(...)`.
+"""
+from __future__ import annotations
+
+from typing import Optional, Sequence, Tuple, Dict, Any, List, Callable, Union
+
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+
+# Riuso dal modulo metrics (embedding e stima lag/ampiezza)
+from .metrics import simplex_embed_2d, lag_and_amplitude
+
+
+# -----------------------------------------------------------------------------
+# Utilità generiche
+# -----------------------------------------------------------------------------
+def _set_ax_equal(ax: Axes) -> None:
+    ax.set_aspect("equal", adjustable="box")
+
+
+def _ensure_1d(a: np.ndarray) -> np.ndarray:
+    a = np.asarray(a)
+    return a.reshape(-1)
+
+
+def _pearson_spearman(x: np.ndarray, y: np.ndarray) -> Tuple[float, float]:
+    """
+    Calcola Pearson e Spearman (senza SciPy) su vettori 1D; ignora NaN.
+    """
+    x = _ensure_1d(x).astype(float)
+    y = _ensure_1d(y).astype(float)
+    mask = np.isfinite(x) & np.isfinite(y)
+    x, y = x[mask], y[mask]
+    if x.size < 2:
+        return np.nan, np.nan
+
+    # Pearson
+    x_c = x - x.mean()
+    y_c = y - y.mean()
+    denom = np.sqrt((x_c**2).sum() * (y_c**2).sum())
+    pearson = float((x_c @ y_c) / denom) if denom > 0 else np.nan
+
+    # Spearman via rank
+    def rankdata(v: np.ndarray) -> np.ndarray:
+        order = np.argsort(v, kind="mergesort")
+        ranks = np.empty_like(order, dtype=float)
+        ranks[order] = np.arange(v.size, dtype=float)
+        # gestisce ties con media dei ranghi
+        # trova blocchi con valori uguali
+        same = np.flatnonzero(np.diff(v[order]) == 0.0)
+        if same.size > 0:
+            start = 0
+            i = 0
+            while i < v.size:
+                j = i + 1
+                while j < v.size and v[order][j] == v[order][i]:
+                    j += 1
+                # media dei ranghi per il blocco [i, j)
+                mean_rank = (i + j - 1) / 2.0
+                ranks[order][i:j] = mean_rank
+                i = j
+        return ranks
+
+    rx = rankdata(x)
+    ry = rankdata(y)
+    rx_c = rx - rx.mean()
+    ry_c = ry - ry.mean()
+    denom_s = np.sqrt((rx_c**2).sum() * (ry_c**2).sum())
+    spearman = float((rx_c @ ry_c) / denom_s) if denom_s > 0 else np.nan
+    return pearson, spearman
+
+
+def _triangle_vertices() -> np.ndarray:
+    """Restituisce i vertici del triangolo equilatero nel sistema usato da simplex_embed_2d."""
+    # usa embedding sugli e_i canonici per garantire coerenza
+    I = np.eye(3, dtype=float)
+    return simplex_embed_2d(I)  # (3,2)
+
+
+def _draw_simplex_frame(ax: Axes, labels: Sequence[str] = ("μ0", "μ1", "μ2")) -> None:
+    """Disegna i bordi del triangolo e i label ai vertici."""
+    V = _triangle_vertices()  # (3,2)
+    # chiude il triangolo ripetendo il primo vertice
+    poly = np.vstack([V, V[:1]])
+    ax.plot(poly[:, 0], poly[:, 1], lw=1.5, color="black", alpha=0.6)
+    # vertici
+    ax.scatter(V[:, 0], V[:, 1], s=30, color="black")
+    for i in range(3):
+        ax.text(V[i, 0], V[i, 1], f" {labels[i]}", va="center", ha="left", fontsize=10)
+    ax.set_xticks([]); ax.set_yticks([])
+    _set_ax_equal(ax)
+
+
+# -----------------------------------------------------------------------------
+# (i) Simplesso: π_t vs π̂_t con vettori di lag
+# -----------------------------------------------------------------------------
+def plot_simplex_trajectory(
+    ax: Axes,
+    pi_true_seq: np.ndarray,      # (T, 3)
+    pi_hat_seq: Optional[np.ndarray] = None,  # (T, 3) o None
+    *,
+    labels: Sequence[str] = ("μ0", "μ1", "μ2"),
+    show_arrows_every: int = 1,
+    arrow_alpha: float = 0.9,
+    compute_lag: bool = True,
+    title: Optional[str] = None,
+    simplex_style: str = "modern",  # 'modern' (embedding) oppure 'legacy'
+    color_by_time: bool = True,
+    cmap_name: str = "viridis",
+    add_colorbar: bool = True,
+    true_label: str = "mixing vero",
+    hat_label: str = "mixing stimato",
+    arrows_mode: str = "direct",  # 'direct' (true t -> hat t) oppure 'lag' (usa lag stimato)
+) -> Dict[str, Any]:
+    """Versione migliorata del plot sul simplesso ispirata alla logica richiesta.
+
+    Novità principali:
+      - Colorazione dei punti per round (colormap continua) con colorbar.
+      - Frecce per ogni (o ogni n) round dal punto true → hat.
+      - Arrows 'direct' (t→t) per aderire all'esempio utente; opzione 'lag'.
+      - Mantiene il calcolo lag/amplitude (ritornato in info) se compute_lag=True.
+    """
+    pi_true_seq = np.asarray(pi_true_seq, dtype=float)
+    if pi_true_seq.ndim != 2 or pi_true_seq.shape[1] != 3:
+        raise ValueError("pi_true_seq deve essere (T,3).")
+
+    if simplex_style not in {"modern", "legacy"}:
+        raise ValueError("simplex_style deve essere 'modern' o 'legacy'.")
+
+    # --- Embedding ---
+    if simplex_style == "modern":
+        _draw_simplex_frame(ax, labels=labels)
+        xy_true = simplex_embed_2d(pi_true_seq)  # (T,2)
+    else:  # legacy embedding equivalente a quello già usato nello script precedente
+        a = pi_true_seq[:, 0]; b = pi_true_seq[:, 1]; c = pi_true_seq[:, 2]
+        denom = a + b + c
+        denom[denom == 0] = 1.0
+        x = 0.5 * (2.0 * b + c) / denom
+        y = (np.sqrt(3.0) / 2.0) * c / denom
+        xy_true = np.stack([x, y], axis=1)
+        verts = np.array([[0.0, 0.0], [1.0, 0.0], [0.5, np.sqrt(3.0)/2.0], [0.0, 0.0]])
+        ax.plot(verts[:,0], verts[:,1], color="black", lw=1.5, alpha=0.6)
+        ax.scatter(verts[:3,0], verts[:3,1], s=30, color="black")
+        for i,(vx,vy) in enumerate(verts[:3]):
+            ax.text(vx, vy, f" {labels[i]}", va="center", ha="left", fontsize=10)
+        ax.set_xlim(-0.03, 1.03); ax.set_ylim(-0.03, (np.sqrt(3.0)/2.0)+0.03)
+        ax.set_aspect('equal', 'box')
+
+    T = pi_true_seq.shape[0]
+
+    # --- Colori per round ---
+    cmap = plt.get_cmap(cmap_name)
+    colors = [cmap(t / max(1, T - 1)) for t in range(T)] if color_by_time else ["C0"] * T
+
+    # --- Traiettoria True ---
+    ax.plot(xy_true[:, 0], xy_true[:, 1], lw=2.0, alpha=0.95, label=true_label)
+
+    # --- Possibly Hat ---
+    info: Dict[str, Any] = {}
+    if pi_hat_seq is not None:
+        pi_hat_seq = np.asarray(pi_hat_seq, dtype=float)
+        if pi_hat_seq.shape != pi_true_seq.shape:
+            raise ValueError("pi_hat_seq deve avere shape (T,3) come pi_true_seq.")
+        if simplex_style == "modern":
+            xy_hat = simplex_embed_2d(pi_hat_seq)
+        else:
+            a = pi_hat_seq[:, 0]; b = pi_hat_seq[:, 1]; c = pi_hat_seq[:, 2]
+            denom = a + b + c
+            denom[denom == 0] = 1.0
+            xh = 0.5 * (2.0 * b + c) / denom
+            yh = (np.sqrt(3.0) / 2.0) * c / denom
+            xy_hat = np.stack([xh, yh], axis=1)
+
+        ax.plot(xy_hat[:, 0], xy_hat[:, 1], lw=2.0, alpha=0.95, ls="--", label=hat_label)
+
+        # Calcolo lag/amplitude (info) anche se le frecce sono 'direct'
+        la = lag_and_amplitude(pi_true_seq, pi_hat_seq) if compute_lag else {}
+        info.update(la)
+    else:
+        xy_hat = None  # type: ignore
+
+    # --- Scatter + frecce ---
+    for t in range(T):
+        # punti true
+        ax.scatter(xy_true[t,0], xy_true[t,1], s=42, color=colors[t], edgecolor="white", linewidth=0.8, zorder=3)
+        if xy_hat is not None:
+            ax.scatter(xy_hat[t,0], xy_hat[t,1], s=28, color=colors[t], edgecolor="none", zorder=3)
+        # frecce: true(t) -> hat(t) (direct) oppure lag-based
+        if xy_hat is not None and (t % max(1, show_arrows_every) == 0):
+            if arrows_mode == "lag" and compute_lag and "lag_rounds" in info:
+                lag_r = int(info.get("lag_rounds", 0))
+                j = (t + lag_r) % T
+                x_to, y_to = xy_hat[j]
+            else:
+                x_to, y_to = xy_hat[t]
+            ax.annotate("", xy=(x_to, y_to), xytext=(xy_true[t,0], xy_true[t,1]),
+                        arrowprops=dict(arrowstyle="->", lw=1.0, color=colors[t], alpha=arrow_alpha))
+
+    # --- Colorbar ---
+    if color_by_time and add_colorbar:
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=mcolors.Normalize(vmin=0, vmax=T-1))
+        cbar = ax.figure.colorbar(sm, ax=ax, fraction=0.046, pad=0.03)
+        cbar.set_label("round")
+
+    if title:
+        ax.set_title(title, fontsize=11)
+    ax.legend(loc="upper right", fontsize=9)
+    return info
+
+
+# -----------------------------------------------------------------------------
+# (ii) Timeseries magnetizzazioni con bande s.e.m.
+# -----------------------------------------------------------------------------
+def plot_magnetization_timeseries(
+    ax: Axes,
+    M_mean: np.ndarray,                # (K, T) o (T,) se singola curva aggregata
+    M_sem: Optional[np.ndarray] = None,  # (K, T) o (T,)
+    *,
+    labels: Optional[Sequence[str]] = None,
+    title: Optional[str] = None,
+) -> None:
+    M_mean = np.asarray(M_mean, dtype=float)
+    if M_mean.ndim == 1:
+        # singola curva
+        T = M_mean.size
+        x = np.arange(T)
+        ax.plot(x, M_mean, lw=1.8, label="mean m")
+        if M_sem is not None:
+            M_sem = _ensure_1d(np.asarray(M_sem, dtype=float))
+            lo = M_mean - M_sem
+            hi = M_mean + M_sem
+            ax.fill_between(x, lo, hi, alpha=0.25, linewidth=0)
+    elif M_mean.ndim == 2:
+        K, T = M_mean.shape
+        x = np.arange(T)
+        for mu in range(K):
+            lab = labels[mu] if labels is not None and mu < len(labels) else f"μ{mu}"
+            ax.plot(x, M_mean[mu], lw=1.8, label=lab)
+            if M_sem is not None:
+                sem = np.asarray(M_sem, dtype=float)
+                if sem.ndim == 2 and sem.shape == (K, T):
+                    lo = M_mean[mu] - sem[mu]
+                    hi = M_mean[mu] + sem[mu]
+                    ax.fill_between(x, lo, hi, alpha=0.25, linewidth=0)
+    else:
+        raise ValueError("M_mean deve essere (K,T) o (T,).")
+
+    ax.set_xlabel("round")
+    ax.set_ylabel("magnetization m")
+    ax.set_ylim(-0.05, 1.05)
+    ax.grid(alpha=0.2)
+    ax.legend(fontsize=9, ncol=2)
+    if title:
+        ax.set_title(title, fontsize=11)
+
+
+# -----------------------------------------------------------------------------
+# (iii) Heatmap retention (K×T)
+# -----------------------------------------------------------------------------
+def plot_magnetization_heatmap(
+    ax: Axes,
+    M: np.ndarray,              # (K, T)
+    *,
+    title: Optional[str] = None,
+    cbar: bool = True,
+) -> None:
+    M = np.asarray(M, dtype=float)
+    if M.ndim != 2:
+        raise ValueError("M deve essere (K,T).")
+    im = ax.imshow(M, aspect="auto", origin="lower", vmin=0.0, vmax=1.0)
+    ax.set_xlabel("round")
+    ax.set_ylabel("μ (archetype)")
+    if cbar:
+        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="m")
+    if title:
+        ax.set_title(title, fontsize=11)
+
+
+# -----------------------------------------------------------------------------
+# (iv) Phase diagram locale (metriche vs w)
+# -----------------------------------------------------------------------------
+def plot_phase_diagram_local(
+    ax: Axes,
+    w_values: Sequence[float],
+    metric_values: Sequence[float],
+    *,
+    metric_label: str = "mean m",
+    title: Optional[str] = None,
+) -> None:
+    w = np.asarray(w_values, dtype=float)
+    y = np.asarray(metric_values, dtype=float)
+    ax.plot(w, y, marker="o", lw=1.8)
+    ax.set_xlabel("w")
+    ax.set_ylabel(metric_label)
+    ax.grid(alpha=0.2)
+    if title:
+        ax.set_title(title, fontsize=11)
+
+
+# -----------------------------------------------------------------------------
+# 1) Pannello 4× (riassuntivo per un seed)
+# -----------------------------------------------------------------------------
+def panel4x(
+    pi_true_seq: np.ndarray,              # (T,3)
+    pi_hat_seq: Optional[np.ndarray],     # (T,3) o None
+    M_mean: np.ndarray,                   # (K,T) o (T,)
+    M_sem: Optional[np.ndarray] = None,   # (K,T) o (T,)
+    *,
+    w_values: Optional[Sequence[float]] = None,
+    phase_metric: Optional[Sequence[float]] = None,
+    phase_metric_label: str = "mean m",
+    labels: Sequence[str] = ("μ0", "μ1", "μ2"),
+    simplex_style: str = "modern",  # 'modern' oppure 'legacy' (passato a plot_simplex_trajectory)
+    figsize: Tuple[int, int] = (14, 8),
+    suptitle: Optional[str] = None,
+) -> Tuple[Figure, Dict[str, Any]]:
+    """
+    Crea il pannello 4×:
+      [0,0] simplesso; [0,1] timeseries m; [1,0] heatmap m; [1,1] phase diagram.
+    Restituisce fig e dict con info (es. lag/amplitude stimati).
+    """
+    fig, axs = plt.subplots(2, 2, figsize=figsize)
+    info: Dict[str, Any] = {}
+
+    # (i) Simplesso
+    info["simplex"] = plot_simplex_trajectory(
+        axs[0, 0],
+        pi_true_seq,
+        pi_hat_seq,
+        labels=labels,
+        title="Simplex trajectory",
+        simplex_style=simplex_style,
+    )
+
+    # (ii) Magnetizzazioni timeseries
+    plot_magnetization_timeseries(axs[0, 1], M_mean, M_sem, labels=labels, title="Magnetization m_μ(t)")
+
+    # (iii) Heatmap
+    if M_mean.ndim == 2:
+        plot_magnetization_heatmap(axs[1, 0], M_mean, title="Retention heatmap")
+    else:
+        # se M_mean è 1D, costruiamo una “heatmap” fittizia con una riga
+        plot_magnetization_heatmap(axs[1, 0], M_mean[None, :], title="Retention (aggregate)")
+
+    # (iv) Phase diagram locale
+    if w_values is not None and phase_metric is not None:
+        plot_phase_diagram_local(axs[1, 1], w_values, phase_metric, metric_label=phase_metric_label,
+                                 title="Phase diagram (local)")
+    else:
+        axs[1, 1].axis("off")
+        axs[1, 1].text(0.5, 0.5, "No phase metric provided", ha="center", va="center")
+
+    if suptitle:
+        fig.suptitle(suptitle, fontsize=12)
+    fig.tight_layout(rect=(0, 0.02, 1, 0.98))
+    return fig, info
+
+
+# -----------------------------------------------------------------------------
+# 2) Lag–Amplitude plot (sperimentale vs teorico)
+# -----------------------------------------------------------------------------
+def plot_lag_amplitude_vs_w(
+    w_values: Sequence[float],
+    lag_rad_values: Sequence[float],
+    amp_values: Sequence[float],
+    *,
+    phi_theory: Optional[Callable[[np.ndarray], np.ndarray]] = None,
+    amp_theory: Optional[Callable[[np.ndarray], np.ndarray]] = None,
+    figsize: Tuple[int, int] = (12, 4),
+    suptitle: Optional[str] = "Lag–Amplitude vs w",
+) -> Figure:
+    """
+    Due pannelli affiancati:
+      - sinistra: φ(w) [radianti]
+      - destra: |H|(w)
+
+    Le curve teoriche sono opzionali (callable che mappano array di w → array).
+    """
+    w = np.asarray(w_values, dtype=float)
+    phi = np.asarray(lag_rad_values, dtype=float)
+    H = np.asarray(amp_values, dtype=float)
+
+    fig, axs = plt.subplots(1, 2, figsize=figsize)
+
+    # φ(w)
+    axs[0].plot(w, phi, marker="o", lw=1.8, label="exp")
+    if phi_theory is not None:
+        try:
+            axs[0].plot(w, _ensure_1d(phi_theory(w)), lw=1.5, ls="--", label="theory")
+        except Exception:
+            pass
+    axs[0].set_xlabel("w")
+    axs[0].set_ylabel("lag φ (radians)")
+    axs[0].grid(alpha=0.2)
+    axs[0].legend(fontsize=9)
+
+    # |H|(w)
+    axs[1].plot(w, H, marker="o", lw=1.8, label="exp")
+    if amp_theory is not None:
+        try:
+            axs[1].plot(w, _ensure_1d(amp_theory(w)), lw=1.5, ls="--", label="theory")
+        except Exception:
+            pass
+    axs[1].set_xlabel("w")
+    axs[1].set_ylabel("|H| (amplitude ratio)")
+    axs[1].grid(alpha=0.2)
+    axs[1].legend(fontsize=9)
+
+    if suptitle:
+        fig.suptitle(suptitle, fontsize=12)
+    fig.tight_layout(rect=(0, 0.02, 1, 0.98))
+    return fig
+
+
+# -----------------------------------------------------------------------------
+# 3) Forgetting vs Plasticity — trittico
+# -----------------------------------------------------------------------------
+def forgetting_vs_plasticity_triptych(
+    entries: Sequence[Dict[str, Any]],
+    *,
+    recent_window: Optional[int] = None,
+    figsize: Tuple[int, int] = (12, 4),
+    suptitle: Optional[str] = "Forgetting vs Plasticity",
+) -> Figure:
+    """
+    entries: lista di dict, uno per bucket di w, ciascuno con:
+      - 'w': float
+      - 'pi_true_seq': (T,3)
+      - 'pi_hat_seq':  (T,3)
+      - 'M': (K,T) magnetizzazioni
+
+    Per ogni bucket calcola:
+      (a) distanza media dal baricentro (r̄) della traiettoria π_true
+      (b) lag globale |φ| via lag_and_amplitude
+      (c) media m_old vs m_recent, dove:
+           old = primi R round, recent = ultimi R round (R=recent_window o T//3)
+    Ritorna una figura 1×3 con barre aggregate per bucket.
+    """
+    W: List[float] = []
+    dist_center: List[float] = []
+    lag_abs: List[float] = []
+    m_old: List[float] = []
+    m_recent: List[float] = []
+
+    for ent in entries:
+        w = float(ent["w"])
+        pi_true = np.asarray(ent["pi_true_seq"], dtype=float)
+        pi_hat = np.asarray(ent["pi_hat_seq"], dtype=float)
+        M = np.asarray(ent["M"], dtype=float)
+        if pi_true.shape[-1] != 3 or pi_hat.shape != pi_true.shape:
+            raise ValueError("pi_* devono essere (T,3) e coerenti.")
+        if M.ndim != 2:
+            raise ValueError("M deve essere (K,T).")
+        T = pi_true.shape[0]
+        R = recent_window if (recent_window is not None and recent_window > 0 and recent_window < T) else max(1, T // 3)
+
+        # (a) distanza dal baricentro
+        xy = simplex_embed_2d(pi_true)
+        r = np.linalg.norm(xy, axis=1)
+        dist_center.append(float(np.mean(r)))
+
+        # (b) lag globale
+        la = lag_and_amplitude(pi_true, pi_hat)
+        lag_abs.append(float(abs(la["lag_radians"])))
+
+        # (c) m_old vs m_recent
+        m_old.append(float(np.mean(M[:, :R])))
+        m_recent.append(float(np.mean(M[:, -R:])))
+
+        W.append(w)
+
+    # Ordina per w crescente
+    order = np.argsort(W)
+    W_arr = np.asarray(W, dtype=float)[order]
+    dist_center_arr = np.asarray(dist_center, dtype=float)[order]
+    lag_abs_arr = np.asarray(lag_abs, dtype=float)[order]
+    m_old_arr = np.asarray(m_old, dtype=float)[order]
+    m_recent_arr = np.asarray(m_recent, dtype=float)[order]
+
+    fig, axs = plt.subplots(1, 3, figsize=figsize)
+
+    # (a) distanza dal baricentro
+    axs[0].bar(np.arange(W_arr.size), dist_center_arr, tick_label=[f"{w:.2f}" for w in W_arr])
+    axs[0].set_xlabel("w")
+    axs[0].set_ylabel("mean distance from center")
+    axs[0].set_title("Simplesso: distanza media")
+    axs[0].grid(axis="y", alpha=0.2)
+
+    # (b) lag
+    axs[1].bar(np.arange(W_arr.size), lag_abs_arr, tick_label=[f"{w:.2f}" for w in W_arr])
+    axs[1].set_xlabel("w")
+    axs[1].set_ylabel("|lag| (radians)")
+    axs[1].set_title("Lag globale")
+    axs[1].grid(axis="y", alpha=0.2)
+
+    # (c) m_old vs m_recent (barre affiancate)
+    idx = np.arange(W_arr.size)
+    width = 0.38
+    axs[2].bar(idx - width/2, m_old_arr, width=width, label="old")
+    axs[2].bar(idx + width/2, m_recent_arr, width=width, label="recent")
+    axs[2].set_xticks(idx)
+    axs[2].set_xticklabels([f"{w:.2f}" for w in W_arr])
+    axs[2].set_xlabel("w")
+    axs[2].set_ylabel("mean m")
+    axs[2].set_title("m: old vs recent")
+    axs[2].legend()
+    axs[2].grid(axis="y", alpha=0.2)
+
+    if suptitle:
+        fig.suptitle(suptitle, fontsize=12)
+    fig.tight_layout(rect=(0, 0.02, 1, 0.98))
+    return fig
+
+
+# -----------------------------------------------------------------------------
+# 4) Scatter “Exposure → Magnetizzazione” (con regressione e ρ/Spearman)
+# -----------------------------------------------------------------------------
+def scatter_exposure_vs_magnetization(
+    ax: Axes,
+    exposure: Union[np.ndarray, Sequence[float]],         # (K,) o (K,T) o (T,)
+    magnetization: Union[np.ndarray, Sequence[float]],    # (K,) o (K,T) o (T,)
+    *,
+    title: Optional[str] = "Exposure → Magnetization",
+    annotate_stats: bool = True,
+) -> Dict[str, float]:
+    """
+    Accetta exposure e magnetization come vettori o matrici:
+      - Se (K,T), appiattisce entrambi (μ,t) e correla su tutti i punti.
+      - Se (K,), correla le medie per archetipo.
+
+    Esegue regressione lineare y = a x + b, disegna la retta e annota Pearson/Spearman.
+    """
+    X = np.asarray(exposure, dtype=float)
+    Y = np.asarray(magnetization, dtype=float)
+    # appiattisci coerentemente
+    if X.shape != Y.shape:
+        # consenti (K,) vs (K,T) usando medie su T
+        if X.ndim == 1 and Y.ndim == 2 and X.size == Y.shape[0]:
+            X = np.repeat(X, Y.shape[1])
+            Y = Y.reshape(-1)
+        elif X.ndim == 2 and Y.ndim == 1 and Y.size == X.shape[0]:
+            X = X.reshape(-1)
+            Y = np.repeat(Y, X.size // Y.size)
+        else:
+            raise ValueError("exposure e magnetization devono avere shape compatibili.")
+
+    x = X.reshape(-1)
+    y = Y.reshape(-1)
+    mask = np.isfinite(x) & np.isfinite(y)
+    x, y = x[mask], y[mask]
+    if x.size == 0:
+        raise ValueError("Dati vuoti dopo la pulizia dei NaN.")
+
+    # retta di regressione
+    a, b = np.polyfit(x, y, deg=1)
+    y_pred = a * x + b
+
+    # correlazioni
+    r_pearson, r_spearman = _pearson_spearman(x, y)
+
+    ax.scatter(x, y, s=20, alpha=0.7)
+    # retta (disegniamo nell'intervallo dei dati)
+    xs = np.linspace(x.min(), x.max(), 100)
+    ax.plot(xs, a * xs + b, lw=1.8, ls="--", label=f"y={a:.3f}x+{b:.3f}")
+    ax.set_xlabel("exposure")
+    ax.set_ylabel("magnetization")
+    ax.grid(alpha=0.2)
+    ax.legend(fontsize=9)
+    if title:
+        ax.set_title(title, fontsize=11)
+    if annotate_stats:
+        ax.text(0.02, 0.98,
+                f"Pearson r={r_pearson:.3f}\nSpearman ρ={r_spearman:.3f}",
+                transform=ax.transAxes, va="top", ha="left", fontsize=9,
+                bbox=dict(boxstyle="round", facecolor="white", alpha=0.7))
+    return {"pearson_r": r_pearson, "spearman_rho": r_spearman}
+
+
+# ---- reporting.py ----
+# -*- coding: utf-8 -*-
+"""
+Raccolta e sintesi dei risultati per Exp-06 (single-only).
+
+Funzioni principali:
+- collect_round_metrics(run_dir)     : carica metrics.json per ciascun round
+- collect_phase_metrics(pis, pi_hats): lag/ampiezza (K=3) tramite metrica complessa
+- build_run_report(run_dir, ...)     : costruisce un report complessivo (JSON + CSV opzionali)
+- dump_csv_*(...)                    : utilità per esportare tabelle CSV
+
+Questo modulo NON disegna figure (grafici); per i plot è previsto un modulo dedicato.
+"""
+from __future__ import annotations
+
+import csv
+from pathlib import Path
+from typing import Dict, Any, List, Optional, Tuple
+
+import numpy as np
+
+# Utilities locali
+from .io import read_json, write_json, list_round_dirs, ensure_dir  # noqa: F401
+# Metriche (riuso)
+from .metrics import (
+    tv_distance,
+    lag_and_amplitude,
+    forgetting_index,
+    equity_measures,
+)
+# Hopfield hooks per leggere la matrice M(K,T)
+from .hopfield_hooks import load_magnetization_matrix_from_run  # noqa: F401
+
+
+# ---------------------------------------------------------------------
+# Caricamento metriche round-wise
+# ---------------------------------------------------------------------
+def collect_round_metrics(run_dir: str | Path) -> List[Dict[str, Any]]:
+    """
+    Legge i file 'metrics.json' in ciascun round_XXX e restituisce una lista ordinata per round.
+    """
+    rdir = Path(run_dir)
+    rounds = list_round_dirs(rdir)
+    items: List[Dict[str, Any]] = []
+    for rd in rounds:
+        mfile = rd / "metrics.json"
+        if not mfile.exists():
+            continue
+        try:
+            obj = read_json(mfile)
+            obj["_round_dir"] = str(rd)
+            items.append(obj)
+        except Exception:
+            continue
+    return items
+
+
+# ---------------------------------------------------------------------
+# Fasi (lag/ampiezza) — solo per K=3 e sequenze complete
+# ---------------------------------------------------------------------
+def collect_phase_metrics_from_rounds(items: List[Dict[str, Any]]) -> Optional[Dict[str, float]]:
+    """
+    Estrae {pi_true_t} e {pi_hat_t} dagli items, allinea e calcola lag/ampiezza.
+    Preferisce 'pi_hat_retrieval' se presente; altrimenti fallback su 'pi_hat' o 'pi_hat_data'.
+    Ritorna None se mancano dati coerenti o K != 3.
+    """
+    if not items:
+        return None
+    pi_true_seq: List[np.ndarray] = []
+    pi_hat_seq: List[np.ndarray] = []
+    for it in items:
+        if "pi_true" not in it:
+            continue
+        pt_raw = it.get("pi_true", None)
+        ph_raw = it.get("pi_hat_retrieval", None)
+        if ph_raw is None:
+            ph_raw = it.get("pi_hat", None) or it.get("pi_hat_data", None)
+        if pt_raw is None or ph_raw is None:
+            continue
+        pt = np.asarray(pt_raw, dtype=float)
+        ph = np.asarray(ph_raw, dtype=float)
+        if pt.shape != ph.shape:
+            continue
+        if pt.size != 3:
+            continue  # supporto solo K=3
+        # normalizza per robustezza
+        pt = pt / (pt.sum() if pt.sum() > 0 else 1.0)
+        ph = ph / (ph.sum() if ph.sum() > 0 else 1.0)
+        pi_true_seq.append(pt)
+        pi_hat_seq.append(ph)
+    if not pi_true_seq or not pi_hat_seq:
+        return None
+    pi_true_matrix = np.stack(pi_true_seq, axis=0)  # (T_sel,3)
+    pi_hat_matrix = np.stack(pi_hat_seq, axis=0)    # (T_sel,3)
+    return lag_and_amplitude(pi_true_matrix, pi_hat_matrix)
+
+
+# ---------------------------------------------------------------------
+# CSV helpers
+# ---------------------------------------------------------------------
+def dump_csv_round_metrics(items: List[Dict[str, Any]], path: str | Path) -> None:
+    """
+    Scrive un CSV con colonne standard per round: TV_pi, K_eff, pi_true, pi_hat, ecc.
+    """
+    if not items:
+        return
+    keys = ["TV_pi", "K_eff", "pi_true", "pi_hat", "M_eff", "n_eigs_sel", "coverage"]
+    rows = []
+    for t, it in enumerate(items):
+        row = {
+            "round": t,
+            "TV_pi": it.get("TV_pi", np.nan),
+            "K_eff": it.get("K_eff", np.nan),
+            "M_eff": it.get("M_eff", np.nan),
+            "n_eigs_sel": it.get("n_eigs_sel", np.nan),
+            "coverage": it.get("coverage", np.nan),
+            "pi_true": ";".join(map(lambda x: f"{x:.6f}", it.get("pi_true", []))) if it.get("pi_true") else "",
+            "pi_hat": ";".join(map(lambda x: f"{x:.6f}", it.get("pi_hat", []))) if it.get("pi_hat") else "",
+        }
+        rows.append(row)
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        for r in rows:
+            writer.writerow(r)
+
+
+def dump_csv_magnetization(M: np.ndarray, path: str | Path) -> None:
+    """
+    Salva la matrice di magnetizzazione M(K,T) in CSV, una riga per μ, colonne round.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    K, T = M.shape
+    with path.open("w", newline="") as f:
+        writer = csv.writer(f)
+        header = ["mu"] + [f"t{t:03d}" for t in range(T)]
+        writer.writerow(header)
+        for mu in range(K):
+            writer.writerow([mu] + [f"{float(M[mu, t]):.6f}" for t in range(T)])
+
+
+# ---------------------------------------------------------------------
+# Report complessivo per una run
+# ---------------------------------------------------------------------
+def build_run_report(
+    run_dir: str | Path,
+    *,
+    write_json_report: bool = True,
+    write_csv_round_metrics: bool = True,
+    write_csv_magnetization: bool = True,
+    exposure_mask: Optional[np.ndarray] = None,
+) -> Dict[str, Any]:
+    """
+    Costruisce un report finale a partire dagli artefatti della run:
+      - round metrics (TV media/mediana, K_eff medio, ecc.)
+      - lag/ampiezza (se K=3)
+      - magnetizzazione Hopfield m_{μ}(t): equity e forgetting index
+    Salva su disco i CSV e un JSON con il riepilogo.
+
+    Returns
+    -------
+    report : dict con le statistiche principali e i path dei file scritti.
+    """
+    rdir = Path(run_dir)
+    results_dir = ensure_dir(rdir / "results")
+
+    # 1) Round metrics
+    items = collect_round_metrics(rdir)
+    tvs = [float(it.get("TV_pi", np.nan)) for it in items]
+    keffs = [float(it.get("K_eff", np.nan)) for it in items]
+    report: Dict[str, Any] = {
+        "n_rounds_found": len(items),
+        "TV_pi_mean": float(np.nanmean(tvs)) if tvs else np.nan,
+        "TV_pi_median": float(np.nanmedian(tvs)) if tvs else np.nan,
+        "K_eff_mean": float(np.nanmean(keffs)) if keffs else np.nan,
+        "K_eff_median": float(np.nanmedian(keffs)) if keffs else np.nan,
+    }
+
+    # 1.b) w-series (se presente)
+    try:
+        w_path = rdir / "results" / "w_series.npy"
+        if w_path.exists():
+            W = np.load(w_path).astype(float).reshape(-1)
+            if W.size > 0:
+                report["w_mean"] = float(np.mean(W))
+                report["w_median"] = float(np.median(W))
+                report["w_std"] = float(np.std(W))
+            else:
+                report["w_mean"] = report["w_median"] = report["w_std"] = np.nan
+        else:
+            report["w_mean"] = report["w_median"] = report["w_std"] = np.nan
+    except Exception:
+        report["w_mean"] = report["w_median"] = report["w_std"] = np.nan
+
+    # 1.c) correlazioni semplici
+    try:
+        if (rdir / "results" / "w_series.npy").exists() and items:
+            W = np.load(rdir / "results" / "w_series.npy").astype(float).reshape(-1)
+            n = min(len(items), W.size)
+            if n > 1:
+                Wn = W[:n]
+                TVn = np.asarray([float(items[i].get("TV_pi", np.nan)) for i in range(n)], dtype=float)
+                Lag = np.asarray([float(items[i].get("lag_abs_rad", np.nan)) for i in range(n)], dtype=float)
+                # filtra NaN per correlazione
+                def _safe_corr(a: np.ndarray, b: np.ndarray) -> float:
+                    mask = np.isfinite(a) & np.isfinite(b)
+                    if mask.sum() < 2:
+                        return float('nan')
+                    aa, bb = a[mask], b[mask]
+                    if np.std(aa) <= 0 or np.std(bb) <= 0:
+                        return float('nan')
+                    return float(np.corrcoef(aa, bb)[0, 1])
+
+                report["corr_w_TVpi"] = _safe_corr(Wn, TVn)
+                report["corr_w_lagabs"] = _safe_corr(Wn, Lag)
+            else:
+                report["corr_w_TVpi"] = report["corr_w_lagabs"] = np.nan
+        else:
+            report["corr_w_TVpi"] = report["corr_w_lagabs"] = np.nan
+    except Exception:
+        report["corr_w_TVpi"] = report["corr_w_lagabs"] = np.nan
+
+    # 2) Phase metrics (K=3)
+    phase = collect_phase_metrics_from_rounds(items)
+    if phase is not None:
+        report.update({
+            "lag_rounds": float(phase["lag_rounds"]),
+            "lag_radians": float(phase["lag_radians"]),
+            "amp_ratio": float(phase["amp_ratio"]),
+        })
+
+    # 3) Magnetizzazione Hopfield: M(K,T)
+    M = load_magnetization_matrix_from_run(rdir)
+    if M is not None:
+        report["magnetization_shape"] = list(map(int, M.shape))
+        # equity (var e gini medi nel tempo)
+        eq = equity_measures(M)
+        report["equity_variance_mean"] = float(eq["variance"])
+        report["equity_gini_mean"] = float(eq["gini"])
+        # forgetting index (per μ)
+        FI = forgetting_index(M, exposure_mask=exposure_mask)
+        report["forgetting_index"] = [float(x) for x in FI]
+    else:
+        report["magnetization_shape"] = None
+
+    # Salvataggi
+    if write_json_report:
+        write_json(results_dir / "report.json", report)
+    if write_csv_round_metrics and items:
+        dump_csv_round_metrics(items, results_dir / "metrics_rounds.csv")
+    if write_csv_magnetization and M is not None:
+        dump_csv_magnetization(M, results_dir / "magnetization.csv")
+
+    return report
+
+
+# ---- scheduler.py ----
+# -*- coding: utf-8 -*-
+"""
+Generatori di mixing-schedule π_t sul simplesso (K archetipi) per Exp-06 (single-only).
+
+Fornisce tre strategie robuste:
+- cyclic(T, K, period, gamma, temp)         : traiettoria liscia e periodica, ideale per esperimenti "cyclic"
+- piecewise_dirichlet(T, K, block, alpha)   : blocchi costanti campionati da Dirichlet
+- random_walk(T, K, step_sigma, tv_max)     : random walk su logits con vincolo di TV step-wise
+
+Utility:
+- make_schedule(hp, kind=..., rng=None, **kwargs) -> (T, K) numpy array (float32)
+- total_variation(p, q) : distanza TV = 0.5 * ||p - q||_1
+
+Nota: restituisce sempre pesi positivi e normalizzati (somma=1) per ogni round.
+"""
+from __future__ import annotations
+
+from typing import Optional, Sequence
+import numpy as np
+
+
+# ----------------------------
+# utilità
+# ----------------------------
+def _softmax(x: np.ndarray, temp: float = 1.0) -> np.ndarray:
+    z = (x / float(max(1e-8, temp))) - np.max(x)  # stabilità numerica
+    e = np.exp(z)
+    s = e.sum()
+    if s <= 0:
+        # fallback uniforme
+        return np.ones_like(x) / float(x.size)
+    return e / s
+
+
+def total_variation(p: np.ndarray, q: np.ndarray) -> float:
+    """TV(p, q) = 0.5 * sum_k |p_k - q_k|"""
+    p = np.asarray(p, dtype=float)
+    q = np.asarray(q, dtype=float)
+    return 0.5 * float(np.sum(np.abs(p - q)))
+
+
+# ----------------------------
+# scheduler: cyclic
+# ----------------------------
+def cyclic(
+    T: int,
+    K: int,
+    *,
+    period: int,
+    gamma: float = 3.0,
+    temp: float = 1.0,
+    center_mix: float = 0.0,
+) -> np.ndarray:
+    """
+    Traccia una traiettoria periodica usando K sinusoidi sfasate e softmax.
+
+    Parametri
+    ---------
+    T : numero di round
+    K : numero archetipi
+    period : periodo (in round). Se T non è multiplo, la fase "riparte" ciclicamente.
+    gamma : ampiezza dei logits (più grande = più vicino ai vertici)
+    temp : temperatura softmax (più piccola = distribuzioni più appuntite)
+    center_mix : blending con uniforme: π <- (1-center_mix)*π + center_mix*(1/K)
+
+    Returns
+    -------
+    pis : (T, K) float32
+    """
+    if period <= 0:
+        raise ValueError("period dev'essere > 0.")
+    phases = 2.0 * np.pi * np.arange(K, dtype=float) / float(K)
+    pis = np.zeros((T, K), dtype=np.float32)
+
+    for t in range(T):
+        theta = 2.0 * np.pi * (t % period) / float(period)
+        logits = gamma * np.cos(theta + phases)
+        p = _softmax(logits, temp=temp)
+        if center_mix > 0.0:
+            p = (1.0 - float(center_mix)) * p + float(center_mix) * (np.ones(K) / float(K))
+        pis[t] = p.astype(np.float32)
+    return pis
+
+
+# ----------------------------
+# scheduler: piecewise Dirichlet
+# ----------------------------
+def piecewise_dirichlet(
+    T: int,
+    K: int,
+    *,
+    block: int,
+    alpha: Sequence[float] | float = 1.0,
+    rng: Optional[np.random.Generator] = None,
+) -> np.ndarray:
+    """
+    Blocchi costanti (lunghezza 'block') con pesi campionati da Dirichlet(alpha).
+
+    Se T non è multiplo di block, l'ultimo blocco viene troncato.
+    alpha:
+        - scalare => vettore [alpha]*K
+        - sequenza => di lunghezza K
+    """
+    if block <= 0:
+        raise ValueError("block dev'essere > 0.")
+    rng = np.random.default_rng() if rng is None else rng
+    alpha_vec = np.full((K,), float(alpha), dtype=float) if isinstance(alpha, (int, float)) else np.asarray(alpha, dtype=float)
+    if alpha_vec.shape != (K,):
+        raise ValueError("alpha deve essere scalare oppure una sequenza di lunghezza K.")
+
+    pis = np.zeros((T, K), dtype=np.float32)
+    t = 0
+    while t < T:
+        # campiona un vettore di mixing dal semplice
+        p = rng.dirichlet(alpha_vec)
+        # normalizzazione (robustezza numerica)
+        if p.sum() <= 0:
+            p = np.ones(K) / float(K)
+        p = (p / p.sum()).astype(np.float32)
+
+        end = min(T, t + block)
+        pis[t:end] = p
+        t = end
+    return pis
+
+
+# ----------------------------
+# scheduler: random walk su logits
+# ----------------------------
+def random_walk(
+    T: int,
+    K: int,
+    *,
+    step_sigma: float = 0.7,
+    tv_max: float = 0.35,
+    rng: Optional[np.random.Generator] = None,
+) -> np.ndarray:
+    """
+    Random walk nei logits con softmax → π_t. Limita la TV step-wise a 'tv_max' (≈ ampiezza massima).
+
+    Parametri
+    ---------
+    step_sigma : deviazione standard del passo gaussiano sui logits
+    tv_max     : bound massimo per TV(π_t, π_{t-1}) per evitare salti irrealistici
+    """
+    rng = np.random.default_rng() if rng is None else rng
+    logits = np.zeros((K,), dtype=float)  # parte uniforme
+    pis = np.zeros((T, K), dtype=np.float32)
+    pis[0] = np.ones((K,), dtype=np.float32) / float(K)
+
+    for t in range(1, T):
+        # proposta passo
+        delta = rng.normal(loc=0.0, scale=step_sigma, size=(K,))
+        # forza zero-mean per tenere il baricentro controllato
+        delta -= delta.mean()
+        logits_prop = logits + delta
+        p_prop = _softmax(logits_prop)
+
+        # enforce TV bound via backtracking se necessario
+        tv = total_variation(p_prop, pis[t - 1])
+        if tv > tv_max:
+            scale = 1.0
+            for _ in range(12):  # backtracking limitato
+                scale *= 0.5
+                logits_prop = logits + scale * delta
+                p_prop = _softmax(logits_prop)
+                tv = total_variation(p_prop, pis[t - 1])
+                if tv <= tv_max:
+                    break
+
+        pis[t] = p_prop.astype(np.float32)
+        logits = logits_prop
+    return pis
+
+
+# ----------------------------
+# factory principale
+# ----------------------------
+def make_schedule(
+    hp,
+    *,
+    kind: str = "cyclic",
+    rng: Optional[np.random.Generator] = None,
+    **kwargs,
+) -> np.ndarray:
+    """
+    Restituisce una matrice (T, K) con la mixing schedule desiderata.
+
+    kind ∈ {'cyclic', 'piecewise_dirichlet', 'random_walk'}.
+    Parametri specifici vedi le funzioni omonime.
+    """
+    T = int(hp.n_batch)
+    K = int(hp.K)
+
+    if kind == "cyclic":
+        period = kwargs.get("period", max(3, T))
+        gamma = kwargs.get("gamma", 3.0)
+        temp = kwargs.get("temp", 1.0)
+        center_mix = kwargs.get("center_mix", 0.0)
+        return cyclic(T, K, period=period, gamma=gamma, temp=temp, center_mix=center_mix)
+
+    if kind == "piecewise_dirichlet":
+        block = kwargs.get("block", max(1, T // 6))
+        alpha = kwargs.get("alpha", 1.0)
+        return piecewise_dirichlet(T, K, block=block, alpha=alpha, rng=rng)
+
+    if kind == "random_walk":
+        step_sigma = kwargs.get("step_sigma", 0.7)
+        tv_max = kwargs.get("tv_max", 0.35)
+        return random_walk(T, K, step_sigma=step_sigma, tv_max=tv_max, rng=rng)
+
+    raise ValueError(f"kind '{kind}' non riconosciuto.")
+
+

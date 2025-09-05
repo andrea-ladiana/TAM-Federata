@@ -97,9 +97,9 @@ class HParams:
     schedule: str = "cyclic"  # kind
     # --- schedule specific (default identici a exp06_synth.py) ---
     period: int = 12
-    gamma: float = 1.5
+    gamma: float = 0.5
     temp: float = 1.2
-    center_mix: float = 0.15
+    center_mix: float = 0.60
     block: int = 4
     alpha: float = 1.0
     step_sigma: float = 0.7
