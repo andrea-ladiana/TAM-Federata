@@ -451,7 +451,15 @@ def init_candidates_from_eigs(V: np.ndarray, L: int, s: int | None = None, rng: 
         return np.empty((0, N), dtype=int)
 
     if s is None:
+        # Empirical formula from notebook can produce very large s when
+        # K_eff is large (e.g. hundreds). Large s -> huge (s*L,N) tensors and
+        # extremely expensive matmuls in TAM_Network.compute_fields. Cap s to
+        # a reasonable maximum to keep runtime bounded while retaining
+        # sufficient candidate diversity. 500 is a conservative default.
         s = max(1, 10 * int((K_eff / max(1, L)) * np.log(K_eff / 0.01)))
+        max_s = 500
+        if s > max_s:
+            s = max_s
 
     rng = np.random.default_rng() if rng is None else rng
     W = rng.normal(0.0, 1.0, size=(s, K_eff))  # (s, K_eff)
@@ -490,6 +498,9 @@ def _prune_and_score(xi_r: np.ndarray, JKS: np.ndarray, xi_true: np.ndarray, spe
         return _DisResult(xi_r=np.empty((0, N), dtype=int), magnetisations=np.array([]))
 
     # 2) mutual-overlap pruning (sopra diagonale)
+    #    Nota sui parametri: qthr è una SOGLIA MASSIMA su |<xi_a, xi_b>|/N.
+    #    - qthr BASSA (es. 0.0) => pruning molto severo, spesso resta 1 solo candidato.
+    #    - qthr ALTA  (≈1.0)    => pruning quasi disattivato.
     q = np.abs((xi_r @ xi_r.T) / N).astype(float)
     iu = np.triu_indices(q.shape[0], k=1)
     bad_pairs = q[iu] > float(spec.qthr)
@@ -2013,8 +2024,21 @@ class _Backend:
                 A, C, B = operands
                 return (A.T @ C) @ B
             if subscripts == 'ij,slj->sli' and len(operands) == 2:
+                # Compute h1 = einsum('ij,slj->sli', J, S) efficiently by
+                # reshaping the (s,L,N) tensor to (s*L, N), performing a
+                # single matrix multiply with J.T and reshaping back. This
+                # avoids potentially expensive tensordot plans and is much
+                # faster for typical sizes used in the dynamics.
                 J, S = operands
-                return np.tensordot(S, J, axes=([2], [1]))
+                J = np.asarray(J)
+                S = np.asarray(S)
+                # S: (s, L, N), J: (N, N) -> want out: (s, L, N) with
+                # out[s,l,i] = sum_j J[i,j] * S[s,l,j] which equals
+                # (S_flat @ J.T).reshape(s, L, N)
+                s_dim, L_dim, N_dim = S.shape
+                S_flat = S.reshape(s_dim * L_dim, N_dim)
+                out_flat = S_flat @ J.T
+                return out_flat.reshape(s_dim, L_dim, J.shape[0])
         except Exception:
             pass
         # Default: enable optimized contraction planning

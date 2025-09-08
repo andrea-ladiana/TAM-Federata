@@ -800,9 +800,14 @@ def lag_and_amplitude(
     # ampiezze radiali (distanza dal baricentro)
     r_true = _radial_distance(xy_true)
     r_hat = _radial_distance(xy_hat)
-    # evitare divisioni per zero
-    denom = float(np.mean(r_true)) if np.mean(r_true) > 1e-8 else 1.0
-    amp_ratio = float(np.mean(r_hat) / denom)
+    # evitare divisioni per zero e mean su slice vuote
+    if getattr(r_true, "size", 0) == 0:
+        denom = 1.0
+    else:
+        mean_r_true = float(np.mean(r_true))
+        denom = mean_r_true if mean_r_true > 1e-8 else 1.0
+    mean_r_hat = float(np.mean(r_hat)) if getattr(r_hat, "size", 0) > 0 else 0.0
+    amp_ratio = float(mean_r_hat / denom)
 
     return {
         "lag_rounds": lag_rounds,
@@ -1313,6 +1318,7 @@ def run_seed_synth(
             "K_eff": int(K_eff),
             "M_eff": int(M_eff),
             "n_eigs_sel": int(V.shape[0]),
+            "n_candidates": int(xi_r.shape[0]),
             "eig_selection": eig_sel_info,
             "TV_pi": TV_t,
             # Mantieni la stima data-driven e anche sotto alias esplicito
@@ -1894,6 +1900,17 @@ def run_seed_fmnist(
             "pi_hat_data": pi_hat.tolist(),
             "pi_true": pi_t.tolist(),
         }
+        # Save per-round metrics for easy inspection (includes K_eff)
+        try:
+            _save_json(rdir / "metrics.json", metrics_t)
+        except Exception:
+            pass
+
+        # Short console notice so the user can see K_eff during runs
+        try:
+            print(f"[Round {t:03d}] K_eff={int(K_eff)} n_eigs_sel={int(V.shape[0])} TV_pi={TV_t:.4f}")
+        except Exception:
+            pass
         all_rounds.append(metrics_t)
 
         # valutazione Hopfield (post-hoc) + estrazione pi_hat_retrieval
@@ -2446,6 +2463,7 @@ def panel4x(
     simplex_style: str = "modern",  # 'modern' oppure 'legacy' (passato a plot_simplex_trajectory)
     figsize: Tuple[int, int] = (14, 8),
     suptitle: Optional[str] = None,
+    bottom_right_mode: str = "exposure",  # 'phase' (legacy), 'drift', 'exposure'
 ) -> Tuple[Figure, Dict[str, Any]]:
     """
     Crea il pannello 4×:
@@ -2475,13 +2493,47 @@ def panel4x(
         # se M_mean è 1D, costruiamo una “heatmap” fittizia con una riga
         plot_magnetization_heatmap(axs[1, 0], M_mean[None, :], title="Retention (aggregate)")
 
-    # (iv) Phase diagram locale
-    if w_values is not None and phase_metric is not None:
-        plot_phase_diagram_local(axs[1, 1], w_values, phase_metric, metric_label=phase_metric_label,
-                                 title="Phase diagram (local)")
+    # (iv) Quadrante in basso a destra: modalità selezionabile
+    bottom_right_mode = str(bottom_right_mode).lower()
+    T = pi_true_seq.shape[0]
+    ax_br = axs[1, 1]
+    if bottom_right_mode == "phase":
+        if w_values is not None and phase_metric is not None:
+            plot_phase_diagram_local(ax_br, w_values, phase_metric, metric_label=phase_metric_label,
+                                     title="Phase diagram (local)")
+        else:
+            ax_br.axis("off")
+            ax_br.text(0.5, 0.5, "No phase metric provided", ha="center", va="center")
+    elif bottom_right_mode == "drift":
+        # Drift strength: TV distance tra π_t e π_{t-1}; Mismatch: TV tra π_t e \hat{π}_t
+        drift = np.zeros(T, dtype=float)
+        drift[1:] = 0.5 * np.abs(pi_true_seq[1:] - pi_true_seq[:-1]).sum(axis=1)
+        ax_br.plot(np.arange(T), drift, label="drift TV(π_t, π_{t-1})", lw=1.8)
+        info["drift_strength"] = drift.tolist()
+        if pi_hat_seq is not None and pi_hat_seq.shape == pi_true_seq.shape:
+            mismatch = 0.5 * np.abs(pi_true_seq - pi_hat_seq).sum(axis=1)
+            ax_br.plot(np.arange(T), mismatch, label="mismatch TV(π_t, π̂_t)", lw=1.5, ls="--")
+            info["mismatch_strength"] = mismatch.tolist()
+        ax_br.set_xlabel("round")
+        ax_br.set_ylabel("TV distance")
+        ax_br.set_title("Drift / Mismatch")
+        ax_br.grid(alpha=0.2)
+        ax_br.legend(fontsize=9)
+    elif bottom_right_mode == "exposure":
+        # Cumulative exposure teorica per archetipo (somma cumulata di π_true)
+        cum_exp = np.cumsum(pi_true_seq, axis=0)  # (T,3)
+        for k in range(cum_exp.shape[1]):
+            lab = labels[k] if k < len(labels) else f"μ{k}"
+            ax_br.plot(np.arange(T), cum_exp[:, k], label=lab, lw=1.8)
+        info["cumulative_exposure"] = cum_exp.tolist()
+        ax_br.set_xlabel("round")
+        ax_br.set_ylabel("cumulative exposure")
+        ax_br.set_title("Cumulative exposure (π accumulata)")
+        ax_br.grid(alpha=0.2)
+        ax_br.legend(fontsize=9, ncol=2)
     else:
-        axs[1, 1].axis("off")
-        axs[1, 1].text(0.5, 0.5, "No phase metric provided", ha="center", va="center")
+        ax_br.axis("off")
+        ax_br.text(0.5, 0.5, f"Mode '{bottom_right_mode}' unknown", ha="center", va="center")
 
     if suptitle:
         fig.suptitle(suptitle, fontsize=12)

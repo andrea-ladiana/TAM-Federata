@@ -107,18 +107,18 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--K", type=int, default=3, help="Numero archetipi (deve essere 3 per Δ2)")
     p.add_argument("--rounds", type=int, default=12, help="Numero di round (T)")
     p.add_argument("--M-total", type=int, default=1200, help="Numero totale di esempi per la run")
-    p.add_argument("--w", type=float, default=0.6, help="Peso 'unsup' nel blend con memoria ebraica")
+    p.add_argument("--w", type=float, default=0.5, help="Peso 'unsup' nel blend con memoria ebraica")
     p.add_argument("--binarize-thresh", type=float, default=None,
                    help="Soglia per binarizzazione {±1}; None => mediana globale")
 
     # Propagazione / Spettro / TAM (override dei default della codebase)
-    p.add_argument("--prop-iters", type=int, default=200, help="Iterazioni propagate_J")
-    p.add_argument("--prop-eps", type=float, default=1e-2, help="Parametro eps per propagate_J")
-    p.add_argument("--tau", type=float, default=0.2, help="Cut sugli autovalori di J_KS")
-    p.add_argument("--rho", type=float, default=0.4, help="Soglia allineamento spettrale")
-    p.add_argument("--qthr", type=float, default=0.8, help="Pruning per overlap mutuo")
+    p.add_argument("--prop-iters", type=int, default=300, help="Iterazioni propagate_J")
+    p.add_argument("--prop-eps", type=float, default=0.005, help="Parametro eps per propagate_J")
+    p.add_argument("--tau", type=float, default=0.10, help="Cut sugli autovalori di J_KS")
+    p.add_argument("--rho", type=float, default=0.30, help="Soglia allineamento spettrale")
+    p.add_argument("--qthr", type=float, default=0.75, help="Pruning per overlap mutuo")
     p.add_argument("--keff-method", type=str, default="shuffle", choices=("shuffle", "mp"), help="Metodo K_eff")
-    p.add_argument("--ema-alpha", type=float, default=0.0, help="EMA su J_unsup (0.0=off)")
+    p.add_argument("--ema-alpha", type=float, default=0.2, help="EMA su J_unsup (0.0=off)")
 
     # Schedule
     p.add_argument("--schedule", type=str, default="cyclic",
@@ -126,9 +126,9 @@ def build_argparser() -> argparse.ArgumentParser:
                    help="Tipo di mixing-schedule")
     # cyclic
     p.add_argument("--period", type=int, default=12, help="[cyclic] Periodo in round")
-    p.add_argument("--gamma", type=float, default=2.0, help="[cyclic] Ampiezza logits")
+    p.add_argument("--gamma", type=float, default=1.4, help="[cyclic] Ampiezza logits")
     p.add_argument("--temp", type=float, default=1.2, help="[cyclic] Temperatura softmax")
-    p.add_argument("--center-mix", type=float, default=0.30, help="[cyclic] Blend con uniforme")
+    p.add_argument("--center-mix", type=float, default=0.45, help="[cyclic] Blend con uniforme")
     # piecewise_dirichlet
     p.add_argument("--block", type=int, default=4, help="[piecewise_dirichlet] Lunghezza blocco")
     p.add_argument("--alpha", type=float, default=1.0, help="[piecewise_dirichlet] Parametro Dirichlet")
@@ -149,22 +149,28 @@ def build_argparser() -> argparse.ArgumentParser:
                    choices=("phase", "drift", "exposure"),
                    help="Contenuto quadrante in basso a destra del pannello 4×: phase (diagram), drift (TV drift/mismatch), exposure (cumulative exposure)")
 
+    # Hopfield evolution (visualizzazione finale)
+    p.add_argument("--hop-evol-start-overlap", type=float, default=0.9,
+                   help="Overlap iniziale desiderato rispetto all'archetipo (0..1)")
+    p.add_argument("--hop-evol-base", type=str, default="auto", choices=("sample", "archetype", "auto"),
+                   help="Base per stato iniziale: sample=immagine reale corrotta, archetype=xi_true corrotto, auto=se il sample ha overlap < target uso archetype")
+
     # --- Adaptive w control (common) ---
-    p.add_argument("--w-policy", type=str, default="fixed",
+    p.add_argument("--w-policy", type=str, default="threshold",
                    choices=("fixed", "threshold", "sigmoid", "pctrl"),
                    help="Policy di aggiornamento w round-wise")
-    p.add_argument("--w-init", type=float, default=0.6, help="Valore iniziale w al round 0")
-    p.add_argument("--w-min", type=float, default=0.10, help="Limite inferiore per w")
-    p.add_argument("--w-max", type=float, default=0.90, help="Limite superiore per w")
+    p.add_argument("--w-init", type=float, default=0.40, help="Valore iniziale w al round 0")
+    p.add_argument("--w-min", type=float, default=0.25, help="Limite inferiore per w")
+    p.add_argument("--w-max", type=float, default=0.70, help="Limite superiore per w")
     p.add_argument("--alpha-w", type=float, default=0.6, help="Smoothing sul controllo di w")
     p.add_argument("--a-drift", type=float, default=0.5, help="Peso D_t in S_t = a*D_t + b*M_t")
     p.add_argument("--b-mismatch", type=float, default=1.0, help="Peso M_t in S_t = a*D_t + b*M_t")
 
     # Policy A: threshold
-    p.add_argument("--theta-low", type=float, default=0.05, help="Soglia bassa per isteresi su S_t")
-    p.add_argument("--theta-high", type=float, default=0.15, help="Soglia alta per isteresi su S_t")
-    p.add_argument("--delta-up", type=float, default=0.10, help="Incremento w quando S_t supera theta_high")
-    p.add_argument("--delta-down", type=float, default=0.05, help="Decremento w quando S_t scende sotto theta_low")
+    p.add_argument("--theta-low", type=float, default=0.06, help="Soglia bassa per isteresi su S_t")
+    p.add_argument("--theta-high", type=float, default=0.12, help="Soglia alta per isteresi su S_t")
+    p.add_argument("--delta-up", type=float, default=0.06, help="Incremento w quando S_t supera theta_high")
+    p.add_argument("--delta-down", type=float, default=0.08, help="Decremento w quando S_t scende sotto theta_low")
 
     # Policy B: sigmoid
     p.add_argument("--theta-mid", type=float, default=0.12, help="Centro della sigmoide su S_t")
@@ -579,8 +585,9 @@ def _open_image_if_possible(img_path: Path) -> None:
 # Hopfield: evoluzione di un esempio per TUTTI gli archetipi (K=3)
 # ---------------------------------------------------------------------
 def _hopfield_evolution_all(run_dir: Path, X: np.ndarray, y: np.ndarray, classes: list[int], *,
-                            beta: float = 3.0, updates: int = 30,
-                            start_overlap: float = 0.2,
+                            beta: float = 4.0, updates: int = 50,
+                            start_overlap: float = 0.8,
+                            base_mode: str = "auto",  # sample|archetype|auto
                             snap_ts: Optional[List[int]] = None) -> None:
     """Crea un'unica immagine con l'evoluzione Hopfield da un esempio reale (corrotto)
     per ciascuno dei K archetipi (qui K=3).
@@ -628,7 +635,7 @@ def _hopfield_evolution_all(run_dir: Path, X: np.ndarray, y: np.ndarray, classes
         # Prepara binarizzazione coerente: usa mediana globale se necessario
         if X.ndim == 3:
             H, W = X.shape[1], X.shape[2]
-        thresh = float(np.median(X))
+        thresh = float(np.median(X.flatten()))
         for c in classes:
             idxs = np.where(y == c)[0]
             if idxs.size == 0:
@@ -644,16 +651,54 @@ def _hopfield_evolution_all(run_dir: Path, X: np.ndarray, y: np.ndarray, classes
             samples.append(x_bin)
         samples = np.stack(samples, axis=0)  # (K,N)
 
-        # Corruzione per ottenere overlap iniziale ~ start_overlap con il proprio archetipo
-        def corrupt(vec: np.ndarray, target_overlap: float, rng: np.random.Generator) -> np.ndarray:
-            # overlap m = (1/N) sum v*xi ; flipping prob p -> expected overlap (1-2p)
-            p_flip = max(0.0, min(0.5, 0.5 * (1.0 - target_overlap)))
-            mask = rng.random(size=vec.shape) < p_flip
-            return np.where(mask, -vec, vec)
+        start_overlap = float(np.clip(start_overlap, 0.0, 1.0))
+
+        def make_with_overlap(target: float, xi: np.ndarray, base: np.ndarray) -> np.ndarray:
+            """Costruisce una configurazione con overlap vicino a target rispetto a xi.
+            Strategia: partendo da 'base' (sample o xi), calcola l'insieme delle posizioni discordanti
+            desiderate rispetto a xi e le applica.
+            """
+            target = float(np.clip(target, 0.0, 1.0))
+            # overlap m = 1 - 2*d/N dove d = #flip vs xi
+            # => d = 0.5 * (1 - m) * N
+            Nloc = xi.size
+            d_target = int(round(0.5 * (1.0 - target) * Nloc))
+            # base_aligned: assicurati stessa direzione di xi (se overlap negativo inverti)
+            if float(np.dot(base, xi)) < 0:
+                base = -base
+            # Posizioni da rendere discordanti per ottenere d_target
+            diff = (base != xi)
+            curr_d = int(diff.sum())
+            v = base.copy()
+            if curr_d > d_target:
+                # troppi flip: riallinea alcuni
+                idx = np.where(diff)[0]
+                if idx.size > d_target:
+                    drop = rng.choice(idx, size=idx.size - d_target, replace=False)
+                    v[drop] = xi[drop]
+            elif curr_d < d_target:
+                # pochi flip: flippa nuove posizioni dall'insieme allineato
+                aligned_idx = np.where(~diff)[0]
+                need = d_target - curr_d
+                if need > 0 and aligned_idx.size >= need:
+                    add = rng.choice(aligned_idx, size=need, replace=False)
+                    v[add] = -xi[add]
+            return v
 
         init_states = []
         for mu in range(K):
-            v0 = corrupt(samples[mu], start_overlap, rng)
+            xi_mu = xi_true[mu]
+            sample_mu = samples[mu]
+            m_sample = float(np.dot(sample_mu, xi_mu) / N)
+            mode = base_mode.lower()
+            if mode == "sample":
+                base_vec = sample_mu
+            elif mode == "archetype":
+                base_vec = xi_mu.copy()
+            else:  # auto
+                # se il sample ha già overlap >= target usa sample, altrimenti parti da xi
+                base_vec = sample_mu if m_sample >= start_overlap else xi_mu.copy()
+            v0 = make_with_overlap(start_overlap, xi_mu, base_vec)
             init_states.append(v0)
         init_states = np.stack(init_states, axis=0)  # (K,N)
 
@@ -713,14 +758,14 @@ def _hopfield_evolution_all(run_dir: Path, X: np.ndarray, y: np.ndarray, classes
                 axc.set_xlabel("t")
             axc.set_ylabel(f"m_μ{mu}")
             axc.grid(alpha=0.3, axis="y")
-        fig.suptitle("Hopfield evolution per archetipo (esempi reali corrotti)", fontsize=11)
+        fig.suptitle(f"Hopfield evolution (target m0={start_overlap:.2f})", fontsize=11)
         figs_dir = ensure_dir(run_dir / "results" / "figs")
         out_path = figs_dir / "hopfield_evolution_all.png"
         fig.savefig(out_path, dpi=180, bbox_inches="tight")
         _plt.close(fig)
         print(f"[Hopfield-Evol] Salvato {out_path}")
-    except Exception as e:
-        print(f"[Hopfield-Evol] Errore: {e}")
+    except Exception as e:  # pragma: no cover
+        print("[Hopfield-Evol] Errore:", e)
 
 # ---------------------------------------------------------------------
 # Main
@@ -847,8 +892,16 @@ def main() -> None:
 
         # === Hopfield evolution (tutti gli archetipi) ===
         try:
-            _hopfield_evolution_all(run_dir, X=X, y=y, classes=classes,
-                                     beta=3.0, updates=30, start_overlap=0.2)
+            _hopfield_evolution_all(
+                run_dir,
+                X=X,
+                y=y,
+                classes=classes,
+                beta=3.0,
+                updates=30,
+                start_overlap=float(getattr(args, "hop_evol_start_overlap", 0.8)),
+                base_mode=str(getattr(args, "hop_evol_base", "auto")),
+            )
         except Exception as e:
             print(f"[Plot] Hopfield evolution (all) non creata per {run_dir}: {e}")
 
