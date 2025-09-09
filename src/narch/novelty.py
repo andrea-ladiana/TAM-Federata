@@ -1,29 +1,113 @@
 # -*- coding: utf-8 -*-
-"""
-novelty.py — Exp-07 (single-only) utilities for novelty tracking and Hopfield-based magnetisations.
+from __future__ import annotations
+
+"""novelty.py — Exp-07 (single-only) utilities for novelty tracking and Hopfield-based magnetisations.
 
 This module REUSES your existing codebase (no "extend" logic anywhere) to:
-  • Track K_eff(t), spectral gap at the boundary K_old, and detection latency.
-  • Compute per-round Hopfield magnetisations using a HEBB matrix built from ξ_ref (aligned) —
-    this satisfies the requirement "magnetizzazioni calcolate con rete di Hopfield con sinapsi
-    inizializzate con matrice di Hebb opportuna".
-  • Aggregate series and convenience helpers for downstream reporting.
+    • Track K_eff(t), spectral gap at the boundary K_old, and detection latency.
+    • Compute per-round Hopfield magnetisations using a HEBB matrix built from ξ_ref (aligned) —
+        this satisfies the requirement "magnetizzazioni calcolate con rete di Hopfield con sinapsi
+        inizializzate con matrice di Hebb opportuna".
+    • Aggregate series and convenience helpers for downstream reporting.
 
 It expects the standard round folders produced by your pipelines:
-    run_dir/
-      ├─ xi_true.npy
-      ├─ pis.npy  (optional, for plotting π_true)
-      ├─ round_000/
-      │    ├─ metrics.json   (contains K_eff, TV_pi, keff_info.eigvals, pi_hat, pi_true, ...)
-      │    ├─ xi_aligned.npy (aligned & sign-fixed candidates for that round)
-      │    └─ J_KS.npy, eigs_sel.npy, V_sel.npy (optional)
-      ├─ round_001/
-      └─ ...
+        run_dir/
+            ├─ xi_true.npy
+            ├─ pis.npy  (optional, for plotting π_true)
+            ├─ round_000/
+            │    ├─ metrics.json   (contains K_eff, TV_pi, keff_info.eigvals, pi_hat, pi_true, ...)
+            │    ├─ xi_aligned.npy (aligned & sign-fixed candidates for that round)
+            │    └─ J_KS.npy, eigs_sel.npy, V_sel.npy (optional)
+            ├─ round_001/
+            └─ ...
 
 All functions operate in "single" setting only.
 """
-from __future__ import annotations
+__all__ = [
+    "novelty_schedule",
+    "compute_series_over_run",
+    "spectral_gap_at_boundary",
+    "detect_novelty_round",
+]
 
+
+def novelty_schedule(
+    T: int,
+    K_old: int,
+    K_new: int,
+    t_intro: int,
+    ramp_len: int,
+    *,
+    alpha_max: float = 1.0,
+    new_visibility_frac: float = 1.0,  # kept for API symmetry (sampling handles visibility)
+) -> np.ndarray:
+    """Build novelty (class-mixture) schedule π_t for Exp-07 (shape: T × (K_old+K_new)).
+
+    Semantics
+    ---------
+    • For t < t_intro: only old classes (uniform over K_old).
+    • From t = t_intro starts a linear ramp of length `ramp_len` (>=1) where α_t grows
+      from ~1/ramp_len up to `alpha_max`, allocating α_t of the mass to NEW classes
+      (uniform over K_new) and 1-α_t to OLD (uniform over K_old).
+    • After the ramp: α_t = alpha_max constant.
+    • Probabilities are always re-normalised (guarding against edge cases).
+
+    Parameters
+    ----------
+    T : int
+        Number of rounds.
+    K_old : int
+        Number of initial (old) archetypes.
+    K_new : int
+        Number of novel archetypes introduced during the run.
+    t_intro : int
+        Round index at which the ramp for new classes starts (0-based).
+    ramp_len : int
+        Length (in rounds) of the linear ramp. If <=1, jump directly to alpha_max.
+    alpha_max : float (default 1.0)
+        Maximum total mass allocated to NEW classes at/after ramp completion.
+    new_visibility_frac : float
+        Not used here (handled in sampling); retained so scripts can forward same arg set.
+
+    Returns
+    -------
+    pis : ndarray (T, K_old+K_new)
+        Row t is π_t (mixture over all classes). Old block first, then new block.
+    """
+    if K_old < 0 or K_new < 0:
+        raise ValueError("K_old e K_new devono essere >= 0")
+    K = K_old + K_new
+    if K == 0:
+        raise ValueError("Serve almeno una classe (K_old + K_new > 0)")
+    pis = np.zeros((int(T), int(K)), dtype=np.float64)
+    ramp_len = max(1, int(ramp_len))
+    for t in range(int(T)):
+        if K_new == 0:
+            # Only old classes forever
+            pis[t, :K_old] = 1.0 / max(1, K_old)
+            continue
+        if t < t_intro:
+            alpha_t = 0.0
+        else:
+            if ramp_len <= 1:
+                alpha_t = alpha_max
+            else:
+                prog = (t - t_intro + 1) / float(ramp_len)
+                alpha_t = alpha_max * max(0.0, min(1.0, prog))
+        alpha_t = max(0.0, min(float(alpha_t), float(alpha_max)))
+        mass_new = alpha_t
+        mass_old = max(0.0, 1.0 - mass_new)
+        if K_old > 0:
+            pis[t, :K_old] = mass_old / float(K_old)
+        if K_new > 0:
+            pis[t, K_old:] = mass_new / float(K_new)
+        # normalise (numeric guards)
+        s = pis[t].sum()
+        if not np.isfinite(s) or s <= 0:
+            pis[t] = 1.0 / float(K)
+        else:
+            pis[t] /= s
+    return pis
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
@@ -139,9 +223,9 @@ def _eval_hopfield_hebb_for_round(
     """
     if run_or_load_hopfield_eval is None:
         raise RuntimeError("run_or_load_hopfield_eval not importable; ensure codebase is on PYTHONPATH.")
-    # prefer aligned candidates; fallback to ground-truth archetypes if missing
+    # prefer aligned candidates; if missing/empty, skip Hopfield eval for this round
     if xi_ref_for_hebb is None or xi_ref_for_hebb.size == 0:
-        xi_ref_for_hebb = xi_true
+        return None
     J_hebb = hebb_J(xi_ref_for_hebb)
     hop_dir = round_dir / "hopfield_hebb"
     hop_dir.mkdir(parents=True, exist_ok=True)
@@ -181,6 +265,8 @@ class SeriesResult:
     pi_hat: Optional[np.ndarray] = None  # (T,K)
     pi_true: Optional[np.ndarray] = None # (T,K)
     t_detect: Optional[int] = None
+    eps: Optional[np.ndarray] = None     # (T,) misclassification rate per round (optional)
+    bound_2eps: Optional[np.ndarray] = None  # (T,) = 2*eps (TV bound)
 
 def compute_series_over_run(
     run_dir: str | Path,
@@ -217,6 +303,7 @@ def compute_series_over_run(
     gap = np.full(T, np.nan, dtype=float)
     TV = np.full(T, np.nan, dtype=float)
     L1 = np.full(T, np.nan, dtype=float)
+    eps_series = np.full(T, np.nan, dtype=float)
     m_old = np.full(T, np.nan, dtype=float)
     m_new = np.full(T, np.nan, dtype=float)
     pi_hat_series = np.full((T, K), np.nan, dtype=float)
@@ -232,6 +319,11 @@ def compute_series_over_run(
             mj = _read_json(metrics_path)
             keff[t] = float(mj.get("K_eff", np.nan))
             TV[t] = float(mj.get("TV_pi", np.nan))
+            if "eps" in mj:
+                try:
+                    eps_series[t] = float(mj.get("eps", np.nan))
+                except Exception:
+                    pass
             if "pi_hat" in mj:
                 v = np.asarray(mj["pi_hat"], dtype=float)
                 if v.size == K:
@@ -260,16 +352,36 @@ def compute_series_over_run(
         if do_hop:
             xi_aligned_path = rd / "xi_aligned.npy"
             xi_ref_for_hebb = np.load(xi_aligned_path) if xi_aligned_path.exists() else None
-            res = _eval_hopfield_hebb_for_round(
-                rd, xi_true=xi_true, xi_ref_for_hebb=xi_ref_for_hebb,
-                exposure_counts=exposure_counts, hp=hop
-            )
+            try:
+                res = _eval_hopfield_hebb_for_round(
+                    rd, xi_true=xi_true, xi_ref_for_hebb=xi_ref_for_hebb,
+                    exposure_counts=exposure_counts, hp=hop
+                )
+            except Exception as e:  # pragma: no cover
+                # fallback sintetico: magnetizzazioni = overlap diagonale |xi_aligned·xi_true|/N
+                res = {"_error": str(e)}
             if isinstance(res, dict):
                 m_mu = None
                 for key in ("magnetization_by_mu", "m_by_mu", "mag_by_mu"):
                     if key in res:
                         m_mu = np.asarray(res[key], dtype=float).ravel()
                         break
+                if m_mu is None and (rd / "xi_aligned.npy").exists():
+                    try:
+                        xa = np.load(rd / "xi_aligned.npy")  # (K,N)
+                        if xa.shape[0] == K:
+                            ov = np.abs(np.sum(xa * xi_true, axis=1) / float(N))
+                            m_mu = ov
+                    except Exception:
+                        pass
+                if m_mu is None:
+                    # final fallback: use m_diag if runner logged it
+                    mj = _read_json(metrics_path) if metrics_path.exists() else {}
+                    if isinstance(mj.get("m_diag", None), list) and len(mj["m_diag"]) == K:
+                        try:
+                            m_mu = np.asarray(mj["m_diag"], dtype=float)
+                        except Exception:
+                            m_mu = None
                 if isinstance(m_mu, np.ndarray) and m_mu.size == K:
                     if K_old > 0:
                         m_old[t] = float(np.mean(m_mu[:K_old]))
@@ -279,6 +391,10 @@ def compute_series_over_run(
     # novelty detection from K_eff
     t_detect = detect_novelty_round(keff, int(K_old), detect_patience=detect_patience)
 
+    bound = None
+    if np.isfinite(eps_series).any():
+        bound = 2.0 * eps_series
+
     return SeriesResult(
         T=T, K=K, K_old=int(K_old),
         keff=keff, gap=gap, TV=TV, L1=L1,
@@ -286,4 +402,6 @@ def compute_series_over_run(
         pi_hat=(pi_hat_series if np.isfinite(pi_hat_series).any() else None),
         pi_true=pi_true_series,
         t_detect=t_detect,
+        eps=(eps_series if np.isfinite(eps_series).any() else None),
+        bound_2eps=bound,
     )

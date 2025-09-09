@@ -25,6 +25,12 @@ risultati/
 logs/
 out_01/
 out_06/
+out_07/
+stress_tests/
+notebooks/
+docs/
+__old__/
+scripts/test_imports
 experiments/**/log.jsonl
 experiments/**/hyperparams.json
 experiments/**/results_table.csv

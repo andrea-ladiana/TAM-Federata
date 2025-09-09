@@ -23,6 +23,7 @@ import json
 import math
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 # project modules
 try:
@@ -68,7 +69,7 @@ def plot_timeseries(series: SeriesResult, outpath: str | Path) -> None:
     fig, axs = plt.subplots(3, 1, figsize=(9, 10), sharex=True)
     # (1) Keff vs t with K_old/K lines and t_detect marker
     ax = axs[0]; _style_ax(ax)
-    ax.plot(x, series.keff, lw=2, label=r"$K_{\mathrm{eff}}(t)$")
+    sns.lineplot(x=x, y=series.keff, ax=ax, linewidth=2, label=r"$K_{\mathrm{eff}}(t)$")
     ax.axhline(series.K_old, color="k", lw=1.2, linestyle=":", label=r"$K_{\mathrm{old}}$")
     ax.axhline(series.K, color="k", lw=1.2, linestyle="--", alpha=0.6, label=r"$K$")
     if series.t_detect is not None:
@@ -78,16 +79,16 @@ def plot_timeseries(series: SeriesResult, outpath: str | Path) -> None:
 
     # (2) Relative spectral gap at the K_old boundary
     ax = axs[1]; _style_ax(ax)
-    ax.plot(x, series.gap, lw=2, label="relative gap @ K_old")
+    sns.lineplot(x=x, y=series.gap, ax=ax, linewidth=2, label="relative gap at K_old")
     if series.t_detect is not None:
         ax.axvline(series.t_detect, color="C3", lw=1.2, linestyle="--")
-    ax.set_ylabel("gap")
+    ax.set_ylabel("(λ_Kold−λ_Kold+1)/|λ_Kold|")
     ax.legend(loc="best")
 
     # (3) Mean magnetisations on old vs new
     ax = axs[2]; _style_ax(ax)
-    ax.plot(x, series.m_old, lw=2, label=r"$\overline{m}_{old}$")
-    ax.plot(x, series.m_new, lw=2, label=r"$\overline{m}_{new}$")
+    sns.lineplot(x=x, y=series.m_old, ax=ax, linewidth=2, label=r"$\overline{m}_{old}$")
+    sns.lineplot(x=x, y=series.m_new, ax=ax, linewidth=2, label=r"$\overline{m}_{new}$")
     if series.t_detect is not None:
         ax.axvline(series.t_detect, color="C3", lw=1.2, linestyle="--")
     ax.set_xlabel("round t")
@@ -180,12 +181,125 @@ def report_novelty_summary(
         "m_new": series.m_new.tolist(),
         "pi_hat": None if series.pi_hat is None else series.pi_hat.tolist(),
         "pi_true": None if series.pi_true is None else series.pi_true.tolist(),
+        "eps": None if getattr(series, 'eps', None) is None else series.eps.tolist(),
+        "bound_2eps": None if getattr(series, 'bound_2eps', None) is None else series.bound_2eps.tolist(),
     })
 
     # Figures
     plot_timeseries(series, out / "fig_timeseries.png")
     plot_pi_error(series, out / "fig_pi_error.png")
     plot_simplex(series, out / "fig_simplex.png")
+
+    return {
+        "outdir": str(out),
+        "K": int(series.K),
+        "K_old": int(series.K_old),
+        "t_detect": None if series.t_detect is None else int(series.t_detect),
+        "T": int(series.T),
+        "figures": {
+            "timeseries": str(out / "fig_timeseries.png"),
+            "pi_error": str(out / "fig_pi_error.png"),
+            "simplex": str(out / "fig_simplex.png"),
+        },
+        "series_json": str(out / "series.json"),
+    }
+
+# ----------------------------
+# Robust variants (Seaborn-first and no-missing files)
+# ----------------------------
+def plot_pi_error_sns(series: SeriesResult, outpath: str | Path) -> None:
+    sns.set_theme(style="whitegrid")
+    x = np.arange(series.T)
+    fig, ax = plt.subplots(figsize=(9, 3.2))
+    _style_ax(ax)
+    sns.lineplot(x=x, y=series.TV, ax=ax, linewidth=2, label="TV(p, p^)")
+    sns.lineplot(x=x, y=series.L1, ax=ax, linewidth=1.5, linestyle="--", label="L1(p, p^)")
+    if getattr(series, 'bound_2eps', None) is not None:
+        try:
+            sns.lineplot(x=x, y=series.bound_2eps, ax=ax, linewidth=1.2, linestyle=":", label="2·ε_t bound")
+        except Exception:
+            pass
+    if series.t_detect is not None:
+        ax.axvline(series.t_detect, color="C3", lw=1.2, linestyle="--")
+    ax.set_xlabel("round t"); ax.set_ylabel("error")
+    ax.legend(loc="best")
+    fig.tight_layout()
+    plt.savefig(outpath, dpi=160)
+    plt.close(fig)
+
+def plot_simplex_robust(series: SeriesResult, outpath: str | Path) -> None:
+    sns.set_theme(style="whitegrid")
+    fig, ax = plt.subplots(figsize=(6, 6))
+    _style_ax(ax)
+    if series.pi_hat is None:
+        ax.text(0.5, 0.5, "pi_hat not available", ha="center", va="center")
+        ax.set_axis_off()
+    else:
+        P_hat = np.asarray(series.pi_hat, dtype=float)
+        XY_hat = simplex_embed_2d(P_hat)
+        sns.lineplot(x=XY_hat[:, 0], y=XY_hat[:, 1], ax=ax, linewidth=2, label="p^(t)")
+        sns.scatterplot(x=[XY_hat[0, 0]], y=[XY_hat[0, 1]], ax=ax, s=40, label="start", marker="o")
+        sns.scatterplot(x=[XY_hat[-1, 0]], y=[XY_hat[-1, 1]], ax=ax, s=40, label="end", marker="s")
+        if series.pi_true is not None:
+            XY_true = simplex_embed_2d(np.asarray(series.pi_true, dtype=float))
+            sns.lineplot(x=XY_true[:, 0], y=XY_true[:, 1], ax=ax, linewidth=1.5, linestyle="--", label="p(t) true", alpha=0.8)
+        ax.set_aspect("equal", adjustable="box")
+        title = "Traiettoria sul simplesso Δ2" if series.K == 3 else "Traiettoria 2D (PCA) di π(t)"
+        ax.set_title(title)
+        ax.legend(loc="best")
+    fig.tight_layout()
+    plt.savefig(outpath, dpi=160)
+    plt.close(fig)
+
+def report_novelty_summary_robust(
+    run_dir: str | Path,
+    *,
+    K_old: int,
+    outdir: Optional[str | Path] = None,
+    hop_frequency: int = 1,
+    hop_beta: float = 3.0,
+    hop_updates: int = 30,
+    hop_reps: int = 32,
+    hop_start_overlap: float = 0.3,
+) -> dict:
+    from .novelty import HopfieldParams  # local import to avoid circulars
+    run_dir = Path(run_dir)
+    out = _ensure_dir(outdir or (run_dir / "exp07_report"))
+
+    series = compute_series_over_run(
+        run_dir,
+        K_old=int(K_old),
+        hop=HopfieldParams(
+            beta=float(hop_beta),
+            updates=int(hop_updates),
+            reps_per_archetype=int(hop_reps),
+            start_overlap=float(hop_start_overlap),
+            stochastic=True,
+            frequency=int(hop_frequency),
+        ),
+        detect_patience=2,
+    )
+
+    _save_json(out / "series.json", {
+        "T": int(series.T),
+        "K": int(series.K),
+        "K_old": int(series.K_old),
+        "t_detect": None if series.t_detect is None else int(series.t_detect),
+        "keff": series.keff.tolist(),
+        "gap": series.gap.tolist(),
+        "TV": series.TV.tolist(),
+        "L1": series.L1.tolist(),
+        "m_old": series.m_old.tolist(),
+        "m_new": series.m_new.tolist(),
+        "pi_hat": None if series.pi_hat is None else series.pi_hat.tolist(),
+        "pi_true": None if series.pi_true is None else series.pi_true.tolist(),
+        "eps": None if getattr(series, 'eps', None) is None else series.eps.tolist(),
+        "bound_2eps": None if getattr(series, 'bound_2eps', None) is None else series.bound_2eps.tolist(),
+    })
+
+    plot_timeseries(series, out / "fig_timeseries.png")
+    plot_pi_error_sns(series, out / "fig_pi_error.png")
+    plot_simplex_robust(series, out / "fig_simplex.png")
 
     return {
         "outdir": str(out),

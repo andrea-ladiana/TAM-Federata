@@ -31,7 +31,12 @@ import json, time
 import os
 
 import numpy as np
-import seaborn as sns
+# Import opzionali per il solo plotting: se mancanti non devono impedire
+# l'uso delle API di valutazione (run_or_load_hopfield_eval, ecc.).
+try:  # pragma: no cover - import facoltativo
+    import seaborn as sns  # type: ignore
+except Exception:  # noqa: E722
+    sns = None  # type: ignore
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 
@@ -482,10 +487,25 @@ def plot_magnetization_distribution(
     df = {"archetipo": xs, "mag": ys}
     import pandas as pd
     df = pd.DataFrame(df)
+    if sns is None:  # fallback minimale senza seaborn
+        if ax is None:
+            _, ax_local = plt.subplots(figsize=(6, 4))
+            ax = ax_local
+        assert ax is not None
+        for μ, arr in sorted(mag_by_mu.items()):
+            y = np.asarray(arr, dtype=float)
+            if y.size == 0:
+                continue
+            ax.scatter([μ]*y.size, y, s=12, alpha=0.6)
+        ax.set_xlabel("Archetipo μ"); ax.set_ylabel("Magnetizzazione finale |m|")
+        if title:
+            ax.set_title(title)
+        return ax
     if ax is None:
-        _, ax = plt.subplots(figsize=(6, 4))
-    # Use violin plot on the left as requested, keep individual points as jittered stripplot
-    # inner='quartile' shows median and quartiles inside the violin; cut=0 avoids extended tails
+        _, ax_local = plt.subplots(figsize=(6, 4))
+        ax = ax_local
+    assert ax is not None
+    # Violin + punti jitterati
     sns.violinplot(data=df, x="archetipo", y="mag", ax=ax, palette=palette, inner="quartile", cut=0)
     if jitter > 0:
         sns.stripplot(data=df, x="archetipo", y="mag", ax=ax, color="k", alpha=0.5, size=3, jitter=jitter)
@@ -522,8 +542,20 @@ def plot_mean_vs_exposure(
     expo = np.asarray(exposure_counts, dtype=float).reshape(K)
     corr_p = eval_artifacts.get("pearson", eval_artifacts.get("eval", {}).get("pearson"))
     corr_s = eval_artifacts.get("spearman", eval_artifacts.get("eval", {}).get("spearman"))
+    if sns is None:  # fallback scatter semplice
+        if ax is None:
+            _, ax_local = plt.subplots(figsize=(5.5, 4))
+            ax = ax_local
+        assert ax is not None
+        ax.scatter(expo, means, c="C0")
+        ax.set_xlabel("Exposure"); ax.set_ylabel("Magnetizzazione media")
+        if title:
+            ax.set_title(title)
+        return ax
     if ax is None:
-        _, ax = plt.subplots(figsize=(5.5, 4))
+        _, ax_local = plt.subplots(figsize=(5.5, 4))
+        ax = ax_local
+    assert ax is not None
     df = {"Exposure": expo, "MeanMag": means, "μ": list(range(K))}
     import pandas as pd
     df = pd.DataFrame(df)

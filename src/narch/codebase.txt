@@ -1,0 +1,1384 @@
+# ---- mnist_utils.py ----
+
+# -*- coding: utf-8 -*-
+"""
+mnist_utils.py — Utilities to use MNIST (structured data) in Exp-07 single-mode.
+
+Design goals:
+  • Reuse existing dataset/binarisation/prototype builders from your codebase when available.
+  • Provide light, dependency-free fallbacks operating on numpy arrays (X,y) already loaded.
+  • Build ±1 binarised images and class prototypes ξ_true = sign(mean image per class).
+  • Offer a helper to assemble per-round, per-client batches in SINGLE mode given π_t.
+
+This module deliberately avoids downloading datasets. If you need to fetch MNIST,
+use your project-specific loaders and pass (X,y) to the fallbacks here.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Dict, Any, Iterable, List, Optional, Sequence, Tuple
+
+import numpy as np
+
+# Prefer reusing your project loaders / transformers, if present.
+# These imports are *optional* and only used if available.
+try:
+    from .data import binarize_pm1 as _cb_binarize_pm1  # type: ignore
+except Exception:
+    _cb_binarize_pm1 = None
+
+try:
+    from .data import build_class_prototypes as _cb_build_class_prototypes  # type: ignore
+except Exception:
+    _cb_build_class_prototypes = None
+
+# -----------------------------------------------------------------------------
+# Basic transforms
+# -----------------------------------------------------------------------------
+def binarize_pm1(X: np.ndarray, *, threshold: Optional[float] = None) -> np.ndarray:
+    """
+    Binarise grayscale images to ±1. If threshold is None, use the per-pixel median.
+    X: array of shape (M, H, W) or (M, N).
+    Returns: Xb in shape (M, N) with values in {-1, +1}.
+    """
+    Xf = X.astype(np.float32)
+    if Xf.ndim == 3:  # (M,H,W) → (M,N)
+        M, H, W = Xf.shape
+        Xf = Xf.reshape(M, H * W)
+    if threshold is None:
+        thr = np.median(Xf, axis=0, keepdims=True)
+    else:
+        thr = float(threshold)
+    Xb = np.where(Xf >= thr, 1.0, -1.0).astype(np.float32)
+    return Xb
+
+def build_class_prototypes(X_pm1: np.ndarray, y: np.ndarray, classes: Sequence[int]) -> np.ndarray:
+    """
+    Build ξ_true as sign(mean image) per class in 'classes', from binarised data X_pm1 ∈ {±1}.
+    Returns an array of shape (K, N) in {±1}, ordered as 'classes'.
+    """
+    if _cb_build_class_prototypes is not None:
+        return _cb_build_class_prototypes(X_pm1, y, classes)  # type: ignore
+
+    cls = list(classes)
+    N = X_pm1.shape[1]
+    K = len(cls)
+    xi = np.zeros((K, N), dtype=np.float32)
+    for i, c in enumerate(cls):
+        idx = np.where(y == c)[0]
+        if idx.size == 0:
+            raise ValueError(f"No samples for class {c}")
+        mu = X_pm1[idx].mean(axis=0, keepdims=True)
+        xi[i] = np.where(mu >= 0.0, 1.0, -1.0)
+    return xi
+
+def select_classes(X: np.ndarray, y: np.ndarray, classes: Sequence[int]) -> Tuple[np.ndarray, np.ndarray]:
+    cls = np.array(classes, dtype=int).ravel().tolist()
+    mask = np.isin(y, cls)
+    return X[mask], y[mask]
+
+# -----------------------------------------------------------------------------
+# Round-wise SINGLE batching
+# -----------------------------------------------------------------------------
+@dataclass
+class SingleBatchSpec:
+    L: int                  # number of clients
+    M_c: int                # examples per client per round
+    classes: Sequence[int]  # ordered list of K classes, e.g., (0,1,2)
+    seed: int = 0
+
+def sample_round_single(
+    X_pm1: np.ndarray,
+    y: np.ndarray,
+    pi_t: np.ndarray,
+    spec: SingleBatchSpec,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Sample a SINGLE-mode round:
+      • X_pm1: (M, N) binarised images in {±1}
+      • y    : (M,) integer labels
+      • pi_t : (K,) mixing vector for the *global* round composition
+      • spec : SingleBatchSpec(L, M_c, classes)
+
+    Returns:
+      E_t: (L, M_c, N) examples (clients first, then local batch)
+      y_t: (L, M_c) class indices in {0, ..., K-1} matching 'classes' order
+    """
+    rng = np.random.default_rng(spec.seed)
+    classes = list(spec.classes)
+    K = len(classes)
+    if pi_t.shape[0] != K:
+        raise ValueError(f"pi_t has shape {pi_t.shape}, expected length {K}")
+
+    # Pre-split indices per chosen class
+    idx_per = [np.where(y == c)[0] for c in classes]
+    for arr in idx_per:
+        if arr.size == 0:
+            raise ValueError("One of the selected classes has no samples.")
+
+    # Global pool per class → draw totals according to pi_t then split to clients evenly
+    total = spec.L * spec.M_c
+    counts = np.random.multinomial(total, (pi_t / (pi_t.sum() + 1e-9)).astype(float))
+
+    # Prepare per-client allocation (round-robin across classes)
+    y_out = np.empty((spec.L, spec.M_c), dtype=int)
+    E_out = np.empty((spec.L, spec.M_c, X_pm1.shape[1]), dtype=np.float32)
+
+    # For each class, draw 'counts[k]' unique indices (with replacement=False if enough, else True)
+    drawn = []
+    for k, arr in enumerate(idx_per):
+        if counts[k] <= arr.size:
+            choose = rng.choice(arr, size=counts[k], replace=False)
+        else:
+            choose = rng.choice(arr, size=counts[k], replace=True)
+        drawn.append(choose)
+
+    # Interleave samples into clients batches
+    ptr = [0] * K
+    for i in range(spec.L):
+        for j in range(spec.M_c):
+            # choose class by proportional allocation left
+            remaining = np.array([counts[k] - ptr[k] for k in range(K)], dtype=int)
+            if (remaining <= 0).all():
+                # fallback: uniform
+                k = int(rng.integers(0, K))
+            else:
+                probs = remaining / (remaining.sum() + 1e-9)
+                k = int(rng.choice(np.arange(K), p=probs))
+            idx = drawn[k][ptr[k]]
+            ptr[k] += 1
+            E_out[i, j] = X_pm1[idx]
+            y_out[i, j] = k
+
+    return E_out, y_out
+
+# -----------------------------------------------------------------------------
+# High-level: build ξ_true and per-round batches from raw arrays
+# -----------------------------------------------------------------------------
+def prepare_mnist_triplet_single(
+    X: np.ndarray,
+    y: np.ndarray,
+    classes: Sequence[int],
+    pis_over_time: np.ndarray,
+    L: int,
+    M_c: int,
+    seed: int = 0,
+    threshold: Optional[float] = None,
+) -> Tuple[np.ndarray, List[Tuple[np.ndarray, np.ndarray]]]:
+    """
+    Convenience wrapper:
+      • Select three classes (K=3 recommended for Δ₂ figures)
+      • Binarise to ±1
+      • Build ξ_true via sign(mean)
+      • For each t, draw SINGLE-mode batch (E_t, y_t) according to π_t
+
+    Returns:
+      xi_true: (K, N)
+      rounds : list of length T with elements (E_t, y_t)
+    """
+    Xc, yc = select_classes(X, y, classes)
+    X_pm1 = binarize_pm1(Xc, threshold=threshold)
+    xi_true = build_class_prototypes(X_pm1, yc, classes)
+
+    T = pis_over_time.shape[0]
+    spec = SingleBatchSpec(L=L, M_c=M_c, classes=classes, seed=seed)
+    rounds: List[Tuple[np.ndarray, np.ndarray]] = []
+    for t in range(T):
+        E_t, y_t = sample_round_single(X_pm1, yc, pis_over_time[t], spec)
+        rounds.append((E_t, y_t))
+        spec.seed += 1  # different sampling per round
+    return xi_true, rounds
+
+
+# ---- novelty.py ----
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+"""novelty.py — Exp-07 (single-only) utilities for novelty tracking and Hopfield-based magnetisations.
+
+This module REUSES your existing codebase (no "extend" logic anywhere) to:
+    • Track K_eff(t), spectral gap at the boundary K_old, and detection latency.
+    • Compute per-round Hopfield magnetisations using a HEBB matrix built from ξ_ref (aligned) —
+        this satisfies the requirement "magnetizzazioni calcolate con rete di Hopfield con sinapsi
+        inizializzate con matrice di Hebb opportuna".
+    • Aggregate series and convenience helpers for downstream reporting.
+
+It expects the standard round folders produced by your pipelines:
+        run_dir/
+            ├─ xi_true.npy
+            ├─ pis.npy  (optional, for plotting π_true)
+            ├─ round_000/
+            │    ├─ metrics.json   (contains K_eff, TV_pi, keff_info.eigvals, pi_hat, pi_true, ...)
+            │    ├─ xi_aligned.npy (aligned & sign-fixed candidates for that round)
+            │    └─ J_KS.npy, eigs_sel.npy, V_sel.npy (optional)
+            ├─ round_001/
+            └─ ...
+
+All functions operate in "single" setting only.
+"""
+__all__ = [
+    "novelty_schedule",
+    "compute_series_over_run",
+    "spectral_gap_at_boundary",
+    "detect_novelty_round",
+]
+
+
+def novelty_schedule(
+    T: int,
+    K_old: int,
+    K_new: int,
+    t_intro: int,
+    ramp_len: int,
+    *,
+    alpha_max: float = 1.0,
+    new_visibility_frac: float = 1.0,  # kept for API symmetry (sampling handles visibility)
+) -> np.ndarray:
+    """Build novelty (class-mixture) schedule π_t for Exp-07 (shape: T × (K_old+K_new)).
+
+    Semantics
+    ---------
+    • For t < t_intro: only old classes (uniform over K_old).
+    • From t = t_intro starts a linear ramp of length `ramp_len` (>=1) where α_t grows
+      from ~1/ramp_len up to `alpha_max`, allocating α_t of the mass to NEW classes
+      (uniform over K_new) and 1-α_t to OLD (uniform over K_old).
+    • After the ramp: α_t = alpha_max constant.
+    • Probabilities are always re-normalised (guarding against edge cases).
+
+    Parameters
+    ----------
+    T : int
+        Number of rounds.
+    K_old : int
+        Number of initial (old) archetypes.
+    K_new : int
+        Number of novel archetypes introduced during the run.
+    t_intro : int
+        Round index at which the ramp for new classes starts (0-based).
+    ramp_len : int
+        Length (in rounds) of the linear ramp. If <=1, jump directly to alpha_max.
+    alpha_max : float (default 1.0)
+        Maximum total mass allocated to NEW classes at/after ramp completion.
+    new_visibility_frac : float
+        Not used here (handled in sampling); retained so scripts can forward same arg set.
+
+    Returns
+    -------
+    pis : ndarray (T, K_old+K_new)
+        Row t is π_t (mixture over all classes). Old block first, then new block.
+    """
+    if K_old < 0 or K_new < 0:
+        raise ValueError("K_old e K_new devono essere >= 0")
+    K = K_old + K_new
+    if K == 0:
+        raise ValueError("Serve almeno una classe (K_old + K_new > 0)")
+    pis = np.zeros((int(T), int(K)), dtype=np.float64)
+    ramp_len = max(1, int(ramp_len))
+    for t in range(int(T)):
+        if K_new == 0:
+            # Only old classes forever
+            pis[t, :K_old] = 1.0 / max(1, K_old)
+            continue
+        if t < t_intro:
+            alpha_t = 0.0
+        else:
+            if ramp_len <= 1:
+                alpha_t = alpha_max
+            else:
+                prog = (t - t_intro + 1) / float(ramp_len)
+                alpha_t = alpha_max * max(0.0, min(1.0, prog))
+        alpha_t = max(0.0, min(float(alpha_t), float(alpha_max)))
+        mass_new = alpha_t
+        mass_old = max(0.0, 1.0 - mass_new)
+        if K_old > 0:
+            pis[t, :K_old] = mass_old / float(K_old)
+        if K_new > 0:
+            pis[t, K_old:] = mass_new / float(K_new)
+        # normalise (numeric guards)
+        s = pis[t].sum()
+        if not np.isfinite(s) or s <= 0:
+            pis[t] = 1.0 / float(K)
+        else:
+            pis[t] /= s
+    return pis
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Any, List, Optional, Tuple
+
+import json
+import numpy as np
+
+# --- Reuse from the provided codebase ---
+try:
+    from src.unsup.hopfield_eval import run_or_load_hopfield_eval  # type: ignore
+except Exception:  # pragma: no cover - allow import outside the project layout
+    run_or_load_hopfield_eval = None  # will raise if actually used without codebase
+
+# Prefer the versions in your "mixing.metrics" if present.
+try:
+    from .metrics import tv_distance, estimate_pi_hat_from_examples  # type: ignore
+except Exception:  # pragma: no cover
+    def tv_distance(p: np.ndarray, q: np.ndarray) -> float:
+        p = np.asarray(p, dtype=float); q = np.asarray(q, dtype=float)
+        return 0.5 * float(np.sum(np.abs(p - q)))
+    def estimate_pi_hat_from_examples(xi_ref: np.ndarray, E_t: np.ndarray) -> np.ndarray:
+        L, M_c, N = E_t.shape
+        K = xi_ref.shape[0]
+        X = E_t.reshape(L * M_c, N)
+        Ov = X @ xi_ref[:K].T
+        mu_hat = np.argmax(Ov, axis=1)
+        counts = np.bincount(mu_hat, minlength=K).astype(float)
+        return counts / (counts.sum() + 1e-9)
+
+# -----------------------------------------------------------------------------
+# Small filesystem helpers
+# -----------------------------------------------------------------------------
+def _list_round_dirs(run_dir: str | Path) -> List[Path]:
+    rdir = Path(run_dir)
+    if not rdir.exists():
+        return []
+    ds = [p for p in rdir.iterdir() if p.is_dir() and p.name.startswith("round_")]
+    def _key(p: Path) -> int:
+        try:
+            return int(p.name.split("_")[-1])
+        except Exception:
+            return 10**9
+    return sorted(ds, key=_key)
+
+def _read_json(p: str | Path) -> Dict[str, Any]:
+    return json.loads(Path(p).read_text())
+
+# -----------------------------------------------------------------------------
+# Core math helpers
+# -----------------------------------------------------------------------------
+def hebb_J(xi: np.ndarray) -> np.ndarray:
+    """
+    Hebbian synaptic matrix J = (1/N) * ξᵀ ξ from binary archetypes ξ (S,N).
+    """
+    if xi.ndim != 2:
+        raise ValueError("xi must be a 2D array (S, N).")
+    xi_f = xi.astype(np.float32)
+    N = xi_f.shape[1]
+    return (xi_f.T @ xi_f) / float(N)
+
+def spectral_gap_at_boundary(eigvals: np.ndarray, K_old: int, *, relative: bool = True) -> float:
+    """
+    gap = λ_{Kold-1} - λ_{Kold} on a DESCENDING-sorted spectrum.
+    If relative=True: divide by |λ_{Kold-1}| to obtain a scale-free drop (cf. report §18).
+    """
+    ev = np.asarray(eigvals, dtype=float).ravel()
+    if ev.size < (K_old + 1) or K_old <= 0:
+        return float("nan")
+    lam_km1 = float(ev[K_old - 1])
+    lam_k = float(ev[K_old])
+    gap = lam_km1 - lam_k
+    if relative:
+        denom = abs(lam_km1) if abs(lam_km1) > 1e-9 else 1.0
+        return float(gap / denom)
+    return float(gap)
+
+def detect_novelty_round(keff_series: np.ndarray, K_old: int, *, detect_patience: int = 2) -> Optional[int]:
+    """
+    First t with K_eff(t) ≥ K_old+1 that persists for 'detect_patience' consecutive rounds.
+    """
+    ks = np.asarray(keff_series, dtype=int).ravel()
+    target = K_old + 1
+    run = 0
+    for t, k in enumerate(ks):
+        run = (run + 1) if (k >= target) else 0
+        if run >= max(1, int(detect_patience)):
+            return t
+    return None
+
+# -----------------------------------------------------------------------------
+# Hopfield magnetisation (HEBB initialisation) per round
+# -----------------------------------------------------------------------------
+@dataclass
+class HopfieldParams:
+    beta: float = 3.0
+    updates: int = 30
+    reps_per_archetype: int = 32
+    start_overlap: float = 0.3
+    stochastic: bool = True
+    frequency: int = 1   # evaluate every n rounds (1 = every round)
+
+def _eval_hopfield_hebb_for_round(
+    round_dir: Path,
+    *,
+    xi_true: np.ndarray,
+    xi_ref_for_hebb: Optional[np.ndarray],
+    exposure_counts: Optional[np.ndarray] = None,
+    hp: HopfieldParams = HopfieldParams(),
+) -> Optional[Dict[str, Any]]:
+    """
+    Build J_hebb = (1/N) ξ_refᵀ ξ_ref using per-round aligned references (if available),
+    then run the standard hopfield runner with that J. Returns the runner's dict.
+    """
+    if run_or_load_hopfield_eval is None:
+        raise RuntimeError("run_or_load_hopfield_eval not importable; ensure codebase is on PYTHONPATH.")
+    # prefer aligned candidates; if missing/empty, skip Hopfield eval for this round
+    if xi_ref_for_hebb is None or xi_ref_for_hebb.size == 0:
+        return None
+    J_hebb = hebb_J(xi_ref_for_hebb)
+    hop_dir = round_dir / "hopfield_hebb"
+    hop_dir.mkdir(parents=True, exist_ok=True)
+    res = run_or_load_hopfield_eval(
+        output_dir=str(hop_dir),
+        J_server=J_hebb,
+        xi_true=xi_true,
+        exposure_counts=exposure_counts,
+        beta=float(hp.beta),
+        updates=int(hp.updates),
+        reps_per_archetype=int(hp.reps_per_archetype),
+        start_overlap=float(hp.start_overlap),
+        force_run=True,
+        save=True,
+        stochastic=bool(hp.stochastic),
+    )
+    if isinstance(res, dict):
+        res.setdefault("_meta", {})
+        res["_meta"]["round_dir"] = str(round_dir)
+        res["_meta"]["mode"] = "hebb"
+    return res if isinstance(res, dict) else None
+
+# -----------------------------------------------------------------------------
+# Aggregation across rounds
+# -----------------------------------------------------------------------------
+@dataclass
+class SeriesResult:
+    T: int
+    K: int
+    K_old: int
+    keff: np.ndarray           # (T,)
+    gap: np.ndarray            # (T,)
+    TV: np.ndarray             # (T,)
+    L1: np.ndarray             # (T,)
+    m_old: np.ndarray          # (T,)  mean Mattis overlap on old block
+    m_new: np.ndarray          # (T,)  mean Mattis overlap on new block
+    pi_hat: Optional[np.ndarray] = None  # (T,K)
+    pi_true: Optional[np.ndarray] = None # (T,K)
+    t_detect: Optional[int] = None
+    eps: Optional[np.ndarray] = None     # (T,) misclassification rate per round (optional)
+    bound_2eps: Optional[np.ndarray] = None  # (T,) = 2*eps (TV bound)
+
+def compute_series_over_run(
+    run_dir: str | Path,
+    *,
+    K_old: int,
+    hop: HopfieldParams = HopfieldParams(),
+    detect_patience: int = 2,
+) -> SeriesResult:
+    """
+    Scan run_dir/round_XXX and build time series for Exp-07 diagnostics.
+    Magnetisations are computed via HEBB-Hopfield as requested.
+    """
+    rdir = Path(run_dir)
+    xi_true_path = rdir / "xi_true.npy"
+    if not xi_true_path.exists():
+        raise FileNotFoundError(f"Missing xi_true.npy in {rdir}")
+    xi_true = np.load(xi_true_path)        # (K,N)
+    K, N = xi_true.shape
+
+    # Optional: true schedule for plotting
+    pis_path = rdir / "pis.npy"
+    pis = np.load(pis_path) if pis_path.exists() else None
+    if isinstance(pis, np.ndarray) and pis.ndim == 2 and pis.shape[1] == K:
+        pi_true_series = pis / (pis.sum(axis=1, keepdims=True) + 1e-9)
+    else:
+        pi_true_series = None
+
+    rounds = _list_round_dirs(rdir)
+    T = len(rounds)
+    if T == 0:
+        raise RuntimeError(f"No round_* folders found under {rdir}")
+
+    keff = np.full(T, np.nan, dtype=float)
+    gap = np.full(T, np.nan, dtype=float)
+    TV = np.full(T, np.nan, dtype=float)
+    L1 = np.full(T, np.nan, dtype=float)
+    eps_series = np.full(T, np.nan, dtype=float)
+    m_old = np.full(T, np.nan, dtype=float)
+    m_new = np.full(T, np.nan, dtype=float)
+    pi_hat_series = np.full((T, K), np.nan, dtype=float)
+
+    # Exposure counts for the Hopfield report (if present)
+    exposure_path = rdir / "exposure_counts.npy"
+    exposure_counts = np.load(exposure_path) if exposure_path.exists() else None
+
+    for t, rd in enumerate(rounds):
+        # ---------- metrics.json (K_eff, TV, eigenvalues, pi_hat, pi_true) ----------
+        metrics_path = rd / "metrics.json"
+        if metrics_path.exists():
+            mj = _read_json(metrics_path)
+            keff[t] = float(mj.get("K_eff", np.nan))
+            TV[t] = float(mj.get("TV_pi", np.nan))
+            if "eps" in mj:
+                try:
+                    eps_series[t] = float(mj.get("eps", np.nan))
+                except Exception:
+                    pass
+            if "pi_hat" in mj:
+                v = np.asarray(mj["pi_hat"], dtype=float)
+                if v.size == K:
+                    pi_hat_series[t] = v / (v.sum() + 1e-9)
+                    if pi_true_series is not None:
+                        L1[t] = float(np.sum(np.abs(pi_hat_series[t] - pi_true_series[t])))
+            # spectral gap at K_old
+            eigvals = None
+            if isinstance(mj.get("keff_info", {}), dict):
+                ev = mj["keff_info"].get("eigvals", None)
+                if isinstance(ev, list):
+                    eigvals = np.asarray(ev, dtype=float)
+            if eigvals is None:
+                ev_path = rd / "eigs_sel.npy"
+                if ev_path.exists():
+                    try:
+                        eigvals = np.load(ev_path)
+                    except Exception:
+                        eigvals = None
+            if isinstance(eigvals, np.ndarray):
+                ev_sorted = -np.sort(-eigvals.ravel())   # DESC
+                gap[t] = spectral_gap_at_boundary(ev_sorted, int(K_old), relative=True)
+
+        # ---------- magnetisations via HEBB-Hopfield ----------
+        do_hop = (hop.frequency <= 1) or ((t % int(hop.frequency)) == 0)
+        if do_hop:
+            xi_aligned_path = rd / "xi_aligned.npy"
+            xi_ref_for_hebb = np.load(xi_aligned_path) if xi_aligned_path.exists() else None
+            try:
+                res = _eval_hopfield_hebb_for_round(
+                    rd, xi_true=xi_true, xi_ref_for_hebb=xi_ref_for_hebb,
+                    exposure_counts=exposure_counts, hp=hop
+                )
+            except Exception as e:  # pragma: no cover
+                # fallback sintetico: magnetizzazioni = overlap diagonale |xi_aligned·xi_true|/N
+                res = {"_error": str(e)}
+            if isinstance(res, dict):
+                m_mu = None
+                for key in ("magnetization_by_mu", "m_by_mu", "mag_by_mu"):
+                    if key in res:
+                        m_mu = np.asarray(res[key], dtype=float).ravel()
+                        break
+                if m_mu is None and (rd / "xi_aligned.npy").exists():
+                    try:
+                        xa = np.load(rd / "xi_aligned.npy")  # (K,N)
+                        if xa.shape[0] == K:
+                            ov = np.abs(np.sum(xa * xi_true, axis=1) / float(N))
+                            m_mu = ov
+                    except Exception:
+                        pass
+                if m_mu is None:
+                    # final fallback: use m_diag if runner logged it
+                    mj = _read_json(metrics_path) if metrics_path.exists() else {}
+                    if isinstance(mj.get("m_diag", None), list) and len(mj["m_diag"]) == K:
+                        try:
+                            m_mu = np.asarray(mj["m_diag"], dtype=float)
+                        except Exception:
+                            m_mu = None
+                if isinstance(m_mu, np.ndarray) and m_mu.size == K:
+                    if K_old > 0:
+                        m_old[t] = float(np.mean(m_mu[:K_old]))
+                    if K_old < K:
+                        m_new[t] = float(np.mean(m_mu[K_old:]))
+
+    # novelty detection from K_eff
+    t_detect = detect_novelty_round(keff, int(K_old), detect_patience=detect_patience)
+
+    bound = None
+    if np.isfinite(eps_series).any():
+        bound = 2.0 * eps_series
+
+    return SeriesResult(
+        T=T, K=K, K_old=int(K_old),
+        keff=keff, gap=gap, TV=TV, L1=L1,
+        m_old=m_old, m_new=m_new,
+        pi_hat=(pi_hat_series if np.isfinite(pi_hat_series).any() else None),
+        pi_true=pi_true_series,
+        t_detect=t_detect,
+        eps=(eps_series if np.isfinite(eps_series).any() else None),
+        bound_2eps=bound,
+    )
+
+
+# ---- plots.py ----
+
+# -*- coding: utf-8 -*-
+"""
+plots_exp07.py — Extended plotting utilities for Exp-07 (single-only).
+
+This module complements `reporting.py` by offering additional figures:
+  A) K_eff(t) with K_old/K lines and t_detect marker (also in reporting.py)
+  B) Relative spectral gap at boundary K_old (also in reporting.py)
+  C) Retrieval: m_old(t) and m_new(t) (also in reporting.py)
+  D) Mixing errors: TV(π,π̂), L1(π,π̂) (also in reporting.py)
+  E) Simplex Δ₂ trajectory (K=3), with time color-coding
+  F) Scree plots pre/post novelty with MP / shuffle thresholds if available
+  G) Heatmap of per-class magnetisations m_μ(t) from Hopfield (Hebb synapses)
+  H) Ablation helpers: t_detect vs scheduler params (scatter) and gap statistics
+
+The functions are thin wrappers around artefacts saved by the runners, and the
+time series computed via `novelty.compute_series_over_run`.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Any, Iterable, List, Optional, Sequence, Tuple, Union
+
+import json
+import math
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib import cm, colors
+
+# Project-local helpers
+try:
+    from .novelty import compute_series_over_run, SeriesResult, spectral_gap_at_boundary  # type: ignore
+except Exception:
+    # Allow out-of-package usage if placed next to novelty.py
+    from novelty import compute_series_over_run, SeriesResult, spectral_gap_at_boundary  # type: ignore
+
+try:
+    from .metrics import simplex_embed_2d  # type: ignore
+except Exception:
+    def simplex_embed_2d(p: np.ndarray) -> np.ndarray:
+        p = np.asarray(p, dtype=float)
+        if p.ndim == 1:
+            p = p[None, :]
+        T, K = p.shape
+        if K == 3:
+            V = np.array([[0.0, 0.0],
+                          [1.0, 0.0],
+                          [0.5, math.sqrt(3)/2.0]], dtype=float)
+            return p @ V
+        X = p - p.mean(axis=0, keepdims=True)
+        U, S, Vt = np.linalg.svd(X, full_matrices=False)
+        return X @ Vt[:2].T
+
+# -----------------------------------------------------------------------------
+# Small I/O helpers
+# -----------------------------------------------------------------------------
+def _read_json(p: Union[str, Path]) -> Dict[str, Any]:
+    return json.loads(Path(p).read_text())
+
+def _try_load(path: Union[str, Path]) -> Optional[np.ndarray]:
+    p = Path(path)
+    if p.exists():
+        try:
+            return np.load(p, allow_pickle=False)
+        except Exception:
+            return None
+    return None
+
+def _list_round_dirs(run_dir: Union[str, Path]) -> List[Path]:
+    rdir = Path(run_dir)
+    ds = [p for p in rdir.iterdir() if p.is_dir() and p.name.startswith("round_")]
+    def _key(p: Path) -> int:
+        try:
+            return int(p.name.split("_")[-1])
+        except Exception:
+            return 10**9
+    return sorted(ds, key=_key)
+
+def _style_ax(ax):
+    ax.grid(True, alpha=0.25, linestyle="--", linewidth=0.8)
+    ax.set_axisbelow(True)
+
+def _hebb_J(xi: np.ndarray) -> np.ndarray:
+    xi = np.asarray(xi, dtype=float)
+    N = xi.shape[1]
+    return (xi.T @ xi) / float(N)
+
+def _hopfield_dynamics(J: np.ndarray, s0: np.ndarray, steps: int = 30) -> np.ndarray:
+    s = np.array(s0, dtype=float)
+    for _ in range(int(steps)):
+        s = np.sign(J @ s)
+        s[s == 0] = 1.0
+    return s
+
+# -----------------------------------------------------------------------------
+# Panel E — Simplex Δ₂ with time coloring
+# -----------------------------------------------------------------------------
+def plot_simplex_timecolored(series: SeriesResult, outpath: Union[str, Path]) -> None:
+    """
+    Plot π̂(t) (and optionally π_true(t)) in the 2-simplex with a colormap along time.
+    Only valid for K=3.
+    """
+    if series.pi_hat is None or series.K != 3:
+        return
+    P_hat = np.asarray(series.pi_hat, dtype=float)
+    XY_hat = simplex_embed_2d(P_hat)  # (T,2)
+
+    T = series.T
+    sns.set_theme(style="whitegrid")
+    fig, ax = plt.subplots(figsize=(6, 6))
+    _style_ax(ax)
+    # Color line segments by time
+    norm = colors.Normalize(vmin=0, vmax=T-1)
+    cmap = cm.get_cmap("viridis")
+    for i in range(T-1):
+        sns.lineplot(x=XY_hat[i:i+2, 0], y=XY_hat[i:i+2, 1], ax=ax, linewidth=2, color=cmap(norm(i)))
+    sns.scatterplot(x=[XY_hat[0, 0]], y=[XY_hat[0, 1]], ax=ax, s=40, marker="o", label="start")
+    sns.scatterplot(x=[XY_hat[-1, 0]], y=[XY_hat[-1, 1]], ax=ax, s=40, marker="s", label="end")
+    if series.pi_true is not None:
+        XY_true = simplex_embed_2d(np.asarray(series.pi_true, dtype=float))
+        ax.plot(XY_true[:, 0], XY_true[:, 1], lw=1.2, linestyle="--", alpha=0.8, label="π(t) true")
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_title("Simplesso Δ₂ — traiettoria colorata nel tempo")
+    ax.legend(loc="best")
+    cb = plt.colorbar(cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax, shrink=0.8)
+    cb.set_label("round t")
+    fig.tight_layout()
+    plt.savefig(outpath, dpi=160)
+    plt.close(fig)
+
+# -----------------------------------------------------------------------------
+# Panel F — Scree plots pre/post novelty
+# -----------------------------------------------------------------------------
+def plot_scree_pre_post(run_dir: Union[str, Path],
+                        K_old: int,
+                        outpath: Union[str, Path],
+                        t_before: Optional[int] = None,
+                        t_after: Optional[int] = None,
+                        max_show: int = 50) -> None:
+    """
+    Read eigenvalues from metrics.json or eigs_sel.npy for two rounds:
+      • t_before: a round before novelty (defaults to first round)
+      • t_after : a round after novelty  (defaults to last round)
+    and plot both normalized spectra on the same axes.
+    """
+    rounds = _list_round_dirs(run_dir)
+    if not rounds:
+        return
+    t_before = 0 if t_before is None else int(t_before)
+    t_after = len(rounds)-1 if t_after is None else int(t_after)
+    t_before = max(0, min(t_before, len(rounds)-1))
+    t_after = max(0, min(t_after, len(rounds)-1))
+
+    def _load_eigs(rd: Path) -> Optional[np.ndarray]:
+        # try metrics.json → keff_info.eigvals → eigs_sel.npy
+        mj_path = rd / "metrics.json"
+        if mj_path.exists():
+            try:
+                mj = _read_json(mj_path)
+                ev = mj.get("keff_info", {}).get("eigvals", None)
+                if isinstance(ev, list) and len(ev) > 0:
+                    return np.asarray(ev, dtype=float)
+            except Exception:
+                pass
+        evp = rd / "eigs_sel.npy"
+        arr = _try_load(evp)
+        return arr
+
+    ev_b = _load_eigs(rounds[t_before])
+    ev_a = _load_eigs(rounds[t_after])
+    if ev_b is None or ev_a is None:
+        return
+
+    ev_b = -np.sort(-np.ravel(ev_b))
+    ev_a = -np.sort(-np.ravel(ev_a))
+    # limit to first max_show entries for readability
+    yb = ev_b[:min(max_show, ev_b.size)] / (np.max(np.abs(ev_b)) + 1e-9)
+    ya = ev_a[:min(max_show, ev_a.size)] / (np.max(np.abs(ev_a)) + 1e-9)
+
+    sns.set_theme(style="whitegrid")
+    fig, axs = plt.subplots(1, 2, figsize=(12, 4.2), sharey=True)
+    for ax, y, title in zip(axs, [yb, ya], [f"pre (t={t_before})", f"post (t={t_after})"]):
+        _style_ax(ax)
+        sns.lineplot(x=np.arange(y.size), y=y, ax=ax, linewidth=2)
+        if K_old > 0 and K_old - 1 < y.size:
+            ax.axvline(K_old - 0.5, linestyle=":", lw=1.2)
+        ax.set_xlabel("eigenvalue index (desc)")
+        ax.set_title(title)
+    axs[0].set_ylabel("normalized λ")
+    fig.tight_layout()
+    plt.savefig(outpath, dpi=160)
+    plt.close(fig)
+
+# -----------------------------------------------------------------------------
+# Panel G — Heatmap m_μ(t)
+# -----------------------------------------------------------------------------
+def plot_magnetization_heatmap(run_dir: Union[str, Path],
+                               outpath: Union[str, Path],
+                               hopfield_subdir: str = "hopfield_hebb",
+                               key_order: Sequence[str] = ("magnetization_by_mu", "m_by_mu", "mag_by_mu")) -> None:
+    """
+    Collect m_by_mu vectors from round_i/<hopfield_subdir>/report.json (or *.npz) and plot a K×T heatmap.
+    """
+    rounds = _list_round_dirs(run_dir)
+    if not rounds:
+        return
+
+    m_list = []
+    for rd in rounds:
+        rep_json = rd / hopfield_subdir / "report.json"
+        m_mu = None
+        if rep_json.exists():
+            try:
+                js = _read_json(rep_json)
+                for key in key_order:
+                    if key in js:
+                        m_mu = np.asarray(js[key], dtype=float).ravel()
+                        break
+            except Exception:
+                m_mu = None
+        if m_mu is None:
+            # fallback: try NPZ with standard key
+            rep_npz = rd / hopfield_subdir / "report.npz"
+            if rep_npz.exists():
+                try:
+                    data = np.load(rep_npz)
+                    for key in key_order:
+                        if key in data:
+                            m_mu = np.asarray(data[key], dtype=float).ravel()
+                            break
+                except Exception:
+                    m_mu = None
+        if m_mu is None:
+            return  # give up if any round missing → ensures rectangular matrix
+        m_list.append(m_mu)
+
+    M = np.stack(m_list, axis=1)  # (K,T)
+    K, T = M.shape
+    sns.set_theme(style="whitegrid")
+    fig, ax = plt.subplots(figsize=(1.0 + 0.4*T, 1.0 + 0.35*K))
+    im = sns.heatmap(M, ax=ax, cmap="viridis", cbar=True)
+    ax.set_xlabel("round t")
+    ax.set_ylabel("class μ")
+    ax.set_title("Hopfield magnetisations m_μ(t) — HEBB synapses")
+    # seaborn heatmap already draws colorbar
+    fig.tight_layout()
+    plt.savefig(outpath, dpi=160)
+    plt.close(fig)
+
+# Robust variant that falls back to overlaps when Hopfield reports are missing
+def plot_magnetization_heatmap_robust(run_dir: Union[str, Path],
+                                      outpath: Union[str, Path],
+                                      hopfield_subdir: str = "hopfield_hebb",
+                                      key_order: Sequence[str] = ("magnetization_by_mu", "m_by_mu", "mag_by_mu"),
+                                      K_old: Optional[int] = None) -> None:
+    run_dir = Path(run_dir)
+    rounds = _list_round_dirs(run_dir)
+    if not rounds:
+        return
+    # Try load xi_true for fallback
+    xi_true = None
+    xtp = run_dir / "xi_true.npy"
+    if xtp.exists():
+        try:
+            xi_true = np.load(xtp)
+        except Exception:
+            xi_true = None
+    m_list = []
+    for rd in rounds:
+        m_mu = None
+        rep_json = rd / hopfield_subdir / "report.json"
+        rep_npz = rd / hopfield_subdir / "report.npz"
+        if rep_json.exists():
+            try:
+                js = _read_json(rep_json)
+                for key in key_order:
+                    if key in js:
+                        m_mu = np.asarray(js[key], dtype=float).ravel()
+                        break
+            except Exception:
+                m_mu = None
+        if m_mu is None and rep_npz.exists():
+            try:
+                data = np.load(rep_npz)
+                for key in key_order:
+                    if key in data:
+                        m_mu = np.asarray(data[key], dtype=float).ravel()
+                        break
+            except Exception:
+                m_mu = None
+        if m_mu is None and xi_true is not None:
+            xa = rd / "xi_aligned.npy"
+            if xa.exists():
+                try:
+                    xi_al = np.load(xa)
+                    if xi_al.shape[0] == xi_true.shape[0]:
+                        # treat zero rows (no candidate) as NaN so they don't show as 1
+                        m_tmp = np.abs(np.sum(xi_al * xi_true, axis=1) / float(xi_true.shape[1]))
+                        for i in range(m_tmp.size):
+                            if np.all(xi_al[i] == 0):
+                                m_tmp[i] = np.nan
+                        m_mu = m_tmp
+                except Exception:
+                    m_mu = None
+        if m_mu is None:
+            return
+        m_list.append(m_mu)
+    M = np.stack(m_list, axis=1)  # (K,T)
+    K, T = M.shape
+    sns.set_theme(style="whitegrid")
+    fig, ax = plt.subplots(figsize=(1.0 + 0.4*T, 1.0 + 0.35*K))
+    sns.heatmap(M, ax=ax, cmap="viridis")
+    ax.set_xlabel("round t")
+    # y labels: old vs new split if provided
+    if K_old is not None and 0 < K_old < K:
+        ax.hlines([K_old - 0.5], xmin=-0.5, xmax=T - 0.5, colors='w', linestyles=':', linewidth=1.2)
+        ax.set_yticks(list(range(K)))
+        labels = [f"old-{i}" if i < K_old else f"new-{i-K_old}" for i in range(K)]
+        ax.set_yticklabels(labels)
+    else:
+        ax.set_ylabel("class μ")
+    ax.set_title("Hopfield magnetisations m_μ(t) — HEBB synapses")
+    fig.tight_layout()
+    plt.savefig(outpath, dpi=160)
+    plt.close(fig)
+
+# -----------------------------------------------------------------------------
+# Panel H — t_detect vs params (scatter)
+# -----------------------------------------------------------------------------
+def plot_tdetect_scatter(summaries: Iterable[Dict[str, Any]],
+                         xkey: str, ykey: str,
+                         outpath: Union[str, Path],
+                         ckey: Optional[str] = None) -> None:
+    """
+    Given a list of summary dicts (e.g., one per sweep point), scatter-plot:
+      x = item[xkey], y = item[ykey]  (e.g., ykey="t_detect")
+      color by item[ckey] if provided.
+
+    Example: summaries = [
+        {"ramp_len": 5, "new_visibility_frac": 0.33, "t_detect": 12},
+        {"ramp_len": 5, "new_visibility_frac": 0.66, "t_detect": 7}, ...
+    ]
+    plot_tdetect_scatter(summaries, "new_visibility_frac", "t_detect", "tdetect.png", ckey="ramp_len")
+    """
+    import matplotlib.pyplot as plt  # local
+    xs, ys, cs = [], [], []
+    for s in summaries:
+        if xkey in s and ykey in s:
+            xs.append(s[xkey]); ys.append(s[ykey])
+            cs.append(s.get(ckey, 0.0) if ckey else 0.0)
+    if not xs:
+        return
+    sns.set_theme(style="whitegrid")
+    fig, ax = plt.subplots(figsize=(6, 4.2))
+    _style_ax(ax)
+    if ckey:
+        sns.scatterplot(x=xs, y=ys, hue=cs, palette="viridis", ax=ax, legend=False)
+        cb = plt.colorbar(cm.ScalarMappable(norm=colors.Normalize(vmin=min(cs), vmax=max(cs)), cmap="viridis"), ax=ax, shrink=0.8); cb.set_label(ckey)
+    else:
+        sns.scatterplot(x=xs, y=ys, ax=ax)
+    ax.set_xlabel(xkey); ax.set_ylabel(ykey)
+    ax.set_title(f"{ykey} vs {xkey}")
+    fig.tight_layout()
+    plt.savefig(outpath, dpi=160)
+    plt.close(fig)
+
+# -----------------------------------------------------------------------------
+# Convenience to build a full panel set for a run
+# -----------------------------------------------------------------------------
+def build_full_panel_set(run_dir: Union[str, Path],
+                         K_old: int,
+                         outdir: Optional[Union[str, Path]] = None) -> Dict[str, str]:
+    """
+    Produce the extended set of figures for a given run directory.
+    Returns a dict of created file paths.
+    """
+    run_dir = Path(run_dir)
+    out = Path(outdir) if outdir is not None else (run_dir / "exp07_plots")
+    out.mkdir(parents=True, exist_ok=True)
+
+    # Core series
+    series = compute_series_over_run(run_dir, K_old=int(K_old))
+
+    # Save the ones not already covered by reporting.py
+    paths: Dict[str, str] = {}
+    if series.K == 3:
+        p = out / "simplex_timecolored.png"
+        plot_simplex_timecolored(series, p)
+        paths["simplex_timecolored"] = str(p)
+
+    # Scree pre/post novelty
+    p = out / "scree_pre_post.png"
+    plot_scree_pre_post(run_dir, K_old=int(K_old), outpath=p)
+    paths["scree_pre_post"] = str(p)
+
+    # Magnetisation heatmap (robust)
+    p = out / "magnetization_heatmap.png"
+    plot_magnetization_heatmap_robust(run_dir, p, K_old=int(K_old))
+    paths["magnetization_heatmap"] = str(p)
+
+    # Final Hebb violin plot (convergence from noisy inits)
+    p = out / "hebb_violin.png"
+    try:
+        plot_final_hebb_violin(run_dir, p, K_old=int(K_old))
+        paths["hebb_violin"] = str(p)
+    except Exception:
+        pass
+
+    return paths
+
+# -----------------------------------------------------------------------------
+# Final Hebb violin: convergence from noisy initial states
+# -----------------------------------------------------------------------------
+def plot_final_hebb_violin(run_dir: Union[str, Path],
+                           outpath: Union[str, Path],
+                           *,
+                           K_old: Optional[int] = None,
+                           noise_levels: Sequence[float] = (0.1, 0.2, 0.3),
+                           reps: int = 50,
+                           updates: int = 30) -> None:
+    run_dir = Path(run_dir)
+    xi_path = run_dir / f"round_{len(_list_round_dirs(run_dir))-1:03d}" / "xi_aligned.npy"
+    if not xi_path.exists():
+        return
+    xi_ref = np.load(xi_path)  # (K,N)
+    K, N = xi_ref.shape
+    J = _hebb_J(xi_ref)
+
+    records = []
+    rng = np.random.default_rng(0)
+    for mu in range(K):
+        base = xi_ref[mu]
+        for nl in noise_levels:
+            flips = int(round(nl * N))
+            for r in range(reps):
+                idx = rng.choice(N, size=flips, replace=False) if flips > 0 else np.array([], dtype=int)
+                s0 = base.copy().astype(float)
+                s0[idx] *= -1.0
+                sT = _hopfield_dynamics(J, s0, steps=updates)
+                m = abs(float(np.dot(sT, base)) / float(N))
+                records.append({"class": mu, "noise": nl, "m": m})
+
+    import pandas as pd
+    df = pd.DataFrame.from_records(records)
+    sns.set_theme(style="whitegrid")
+    fig, ax = plt.subplots(figsize=(10, 4.5))
+    if K_old is not None and 0 < K_old < K:
+        class_labels = [f"old-{i}" if i < K_old else f"new-{i-K_old}" for i in range(K)]
+    else:
+        class_labels = [str(i) for i in range(K)]
+    df["class_label"] = df["class"].apply(lambda x: class_labels[int(x)])
+    sns.violinplot(data=df, x="class_label", y="m", hue="noise", ax=ax, cut=0, inner="quartile")
+    ax.set_xlabel("class (old/new)")
+    ax.set_ylabel("final magnetization |m|")
+    ax.set_title("Convergenza Hopfield con J_hebb(finale) da stati iniziali rumorosi")
+    fig.tight_layout()
+    plt.savefig(outpath, dpi=160)
+    plt.close(fig)
+
+
+# ---- reporting.py ----
+# -*- coding: utf-8 -*-
+"""
+reporting.py — High-level reporting for Exp-07 (single-only).
+
+Builds figures and a compact JSON summary from the round artefacts + the
+series computed by novelty.compute_series_over_run().
+
+Outputs (saved under outdir, default run_dir/"exp07_report"):
+  • series.json  — all time series + metadata (K, K_old, t_detect, ...)
+  • fig_timeseries.png — K_eff vs t, spectral gap at K_old, m_old/m_new
+  • fig_pi_error.png   — TV(π, π̂) and L1(π, π̂) over t
+  • fig_simplex.png    — 2D embedding of π̂(t) and (if available) π_true(t) for K=3
+
+All plots are Matplotlib-only, no external deps. Safe to import without full project.
+"""
+from __future__ import annotations
+
+from dataclasses import asdict
+from pathlib import Path
+from typing import Optional
+
+import json
+import math
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# project modules
+try:
+    from .metrics import simplex_embed_2d  # type: ignore
+except Exception:  # fallback: regular 2-simplex embedding for K=3 or PCA for K!=3
+    def simplex_embed_2d(p: np.ndarray) -> np.ndarray:
+        p = np.asarray(p, dtype=float)
+        if p.ndim == 1:
+            p = p[None, :]
+        T, K = p.shape
+        if K == 3:
+            V = np.array([[0.0, 0.0],
+                          [1.0, 0.0],
+                          [0.5, math.sqrt(3)/2.0]], dtype=float)
+            return p @ V
+        X = p - p.mean(axis=0, keepdims=True)
+        U, S, Vt = np.linalg.svd(X, full_matrices=False)
+        return X @ Vt[:2].T
+
+from .novelty import compute_series_over_run, SeriesResult  # type: ignore
+
+
+# ----------------------------
+# I/O helpers
+# ----------------------------
+def _ensure_dir(p: str | Path) -> Path:
+    p = Path(p); p.mkdir(parents=True, exist_ok=True); return p
+
+def _save_json(p: str | Path, obj) -> None:
+    Path(p).write_text(json.dumps(obj, indent=2))
+
+# ----------------------------
+# Plotting
+# ----------------------------
+def _style_ax(ax):
+    ax.grid(True, alpha=0.25, linestyle="--", linewidth=0.8)
+    ax.set_axisbelow(True)
+
+def plot_timeseries(series: SeriesResult, outpath: str | Path) -> None:
+    T = int(series.T)
+    x = np.arange(T)
+
+    fig, axs = plt.subplots(3, 1, figsize=(9, 10), sharex=True)
+    # (1) Keff vs t with K_old/K lines and t_detect marker
+    ax = axs[0]; _style_ax(ax)
+    sns.lineplot(x=x, y=series.keff, ax=ax, linewidth=2, label=r"$K_{\mathrm{eff}}(t)$")
+    ax.axhline(series.K_old, color="k", lw=1.2, linestyle=":", label=r"$K_{\mathrm{old}}$")
+    ax.axhline(series.K, color="k", lw=1.2, linestyle="--", alpha=0.6, label=r"$K$")
+    if series.t_detect is not None:
+        ax.axvline(series.t_detect, color="C3", lw=1.2, linestyle="--", label="t_detect")
+    ax.set_ylabel("K_eff")
+    ax.legend(loc="best")
+
+    # (2) Relative spectral gap at the K_old boundary
+    ax = axs[1]; _style_ax(ax)
+    sns.lineplot(x=x, y=series.gap, ax=ax, linewidth=2, label="relative gap at K_old")
+    if series.t_detect is not None:
+        ax.axvline(series.t_detect, color="C3", lw=1.2, linestyle="--")
+    ax.set_ylabel("(λ_Kold−λ_Kold+1)/|λ_Kold|")
+    ax.legend(loc="best")
+
+    # (3) Mean magnetisations on old vs new
+    ax = axs[2]; _style_ax(ax)
+    sns.lineplot(x=x, y=series.m_old, ax=ax, linewidth=2, label=r"$\overline{m}_{old}$")
+    sns.lineplot(x=x, y=series.m_new, ax=ax, linewidth=2, label=r"$\overline{m}_{new}$")
+    if series.t_detect is not None:
+        ax.axvline(series.t_detect, color="C3", lw=1.2, linestyle="--")
+    ax.set_xlabel("round t")
+    ax.set_ylabel("mean Mattis overlap")
+    ax.legend(loc="best")
+
+    fig.tight_layout()
+    plt.savefig(outpath, dpi=160)
+    plt.close(fig)
+
+def plot_pi_error(series: SeriesResult, outpath: str | Path) -> None:
+    x = np.arange(series.T)
+    fig, ax = plt.subplots(figsize=(9, 3.2))
+    _style_ax(ax)
+    ax.plot(x, series.TV, lw=2, label="TV(π, π̂)")
+    ax.plot(x, series.L1, lw=1.5, linestyle="--", label="L1(π, π̂)")
+    if series.t_detect is not None:
+        ax.axvline(series.t_detect, color="C3", lw=1.2, linestyle="--")
+    ax.set_xlabel("round t"); ax.set_ylabel("error")
+    ax.legend(loc="best")
+    fig.tight_layout()
+    plt.savefig(outpath, dpi=160)
+    plt.close(fig)
+
+def plot_simplex(series: SeriesResult, outpath: str | Path) -> None:
+    if series.pi_hat is None or series.K != 3:
+        return  # only for K=3
+    P_hat = np.asarray(series.pi_hat, dtype=float)  # (T,3)
+    XY_hat = simplex_embed_2d(P_hat)
+    fig, ax = plt.subplots(figsize=(6, 6))
+    _style_ax(ax)
+    ax.plot(XY_hat[:, 0], XY_hat[:, 1], lw=2, label="π̂(t)")
+    ax.scatter(XY_hat[0, 0], XY_hat[0, 1], s=40, zorder=3, label="start", marker="o")
+    ax.scatter(XY_hat[-1, 0], XY_hat[-1, 1], s=40, zorder=3, label="end", marker="s")
+    if series.pi_true is not None:
+        XY_true = simplex_embed_2d(np.asarray(series.pi_true, dtype=float))
+        ax.plot(XY_true[:, 0], XY_true[:, 1], lw=1.5, linestyle="--", label="π(t) true", alpha=0.8)
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_title("Simplesso Δ₂ — traiettoria del mixing")
+    ax.legend(loc="best")
+    fig.tight_layout()
+    plt.savefig(outpath, dpi=160)
+    plt.close(fig)
+
+# ----------------------------
+# Public API
+# ----------------------------
+def report_novelty_summary(
+    run_dir: str | Path,
+    *,
+    K_old: int,
+    outdir: Optional[str | Path] = None,
+    hop_frequency: int = 1,
+    hop_beta: float = 3.0,
+    hop_updates: int = 30,
+    hop_reps: int = 32,
+    hop_start_overlap: float = 0.3,
+) -> dict:
+    """
+    Build all Exp-07 figures + JSON series from a completed run directory.
+    Magnetisations are computed from Hebb J(ξ_ref_aligned(t)).
+    """
+    from .novelty import HopfieldParams  # local import to avoid circulars
+    run_dir = Path(run_dir)
+    out = _ensure_dir(outdir or (run_dir / "exp07_report"))
+
+    series = compute_series_over_run(
+        run_dir,
+        K_old=int(K_old),
+        hop=HopfieldParams(
+            beta=float(hop_beta),
+            updates=int(hop_updates),
+            reps_per_archetype=int(hop_reps),
+            start_overlap=float(hop_start_overlap),
+            stochastic=True,
+            frequency=int(hop_frequency),
+        ),
+        detect_patience=2,
+    )
+
+    # Save JSON
+    _save_json(out / "series.json", {
+        **asdict(series),
+        # convert arrays to lists for JSON
+        "keff": series.keff.tolist(),
+        "gap": series.gap.tolist(),
+        "TV": series.TV.tolist(),
+        "L1": series.L1.tolist(),
+        "m_old": series.m_old.tolist(),
+        "m_new": series.m_new.tolist(),
+        "pi_hat": None if series.pi_hat is None else series.pi_hat.tolist(),
+        "pi_true": None if series.pi_true is None else series.pi_true.tolist(),
+        "eps": None if getattr(series, 'eps', None) is None else series.eps.tolist(),
+        "bound_2eps": None if getattr(series, 'bound_2eps', None) is None else series.bound_2eps.tolist(),
+    })
+
+    # Figures
+    plot_timeseries(series, out / "fig_timeseries.png")
+    plot_pi_error(series, out / "fig_pi_error.png")
+    plot_simplex(series, out / "fig_simplex.png")
+
+    return {
+        "outdir": str(out),
+        "K": int(series.K),
+        "K_old": int(series.K_old),
+        "t_detect": None if series.t_detect is None else int(series.t_detect),
+        "T": int(series.T),
+        "figures": {
+            "timeseries": str(out / "fig_timeseries.png"),
+            "pi_error": str(out / "fig_pi_error.png"),
+            "simplex": str(out / "fig_simplex.png"),
+        },
+        "series_json": str(out / "series.json"),
+    }
+
+# ----------------------------
+# Robust variants (Seaborn-first and no-missing files)
+# ----------------------------
+def plot_pi_error_sns(series: SeriesResult, outpath: str | Path) -> None:
+    sns.set_theme(style="whitegrid")
+    x = np.arange(series.T)
+    fig, ax = plt.subplots(figsize=(9, 3.2))
+    _style_ax(ax)
+    sns.lineplot(x=x, y=series.TV, ax=ax, linewidth=2, label="TV(p, p^)")
+    sns.lineplot(x=x, y=series.L1, ax=ax, linewidth=1.5, linestyle="--", label="L1(p, p^)")
+    if getattr(series, 'bound_2eps', None) is not None:
+        try:
+            sns.lineplot(x=x, y=series.bound_2eps, ax=ax, linewidth=1.2, linestyle=":", label="2·ε_t bound")
+        except Exception:
+            pass
+    if series.t_detect is not None:
+        ax.axvline(series.t_detect, color="C3", lw=1.2, linestyle="--")
+    ax.set_xlabel("round t"); ax.set_ylabel("error")
+    ax.legend(loc="best")
+    fig.tight_layout()
+    plt.savefig(outpath, dpi=160)
+    plt.close(fig)
+
+def plot_simplex_robust(series: SeriesResult, outpath: str | Path) -> None:
+    sns.set_theme(style="whitegrid")
+    fig, ax = plt.subplots(figsize=(6, 6))
+    _style_ax(ax)
+    if series.pi_hat is None:
+        ax.text(0.5, 0.5, "pi_hat not available", ha="center", va="center")
+        ax.set_axis_off()
+    else:
+        P_hat = np.asarray(series.pi_hat, dtype=float)
+        XY_hat = simplex_embed_2d(P_hat)
+        sns.lineplot(x=XY_hat[:, 0], y=XY_hat[:, 1], ax=ax, linewidth=2, label="p^(t)")
+        sns.scatterplot(x=[XY_hat[0, 0]], y=[XY_hat[0, 1]], ax=ax, s=40, label="start", marker="o")
+        sns.scatterplot(x=[XY_hat[-1, 0]], y=[XY_hat[-1, 1]], ax=ax, s=40, label="end", marker="s")
+        if series.pi_true is not None:
+            XY_true = simplex_embed_2d(np.asarray(series.pi_true, dtype=float))
+            sns.lineplot(x=XY_true[:, 0], y=XY_true[:, 1], ax=ax, linewidth=1.5, linestyle="--", label="p(t) true", alpha=0.8)
+        ax.set_aspect("equal", adjustable="box")
+        title = "Traiettoria sul simplesso Δ2" if series.K == 3 else "Traiettoria 2D (PCA) di π(t)"
+        ax.set_title(title)
+        ax.legend(loc="best")
+    fig.tight_layout()
+    plt.savefig(outpath, dpi=160)
+    plt.close(fig)
+
+def report_novelty_summary_robust(
+    run_dir: str | Path,
+    *,
+    K_old: int,
+    outdir: Optional[str | Path] = None,
+    hop_frequency: int = 1,
+    hop_beta: float = 3.0,
+    hop_updates: int = 30,
+    hop_reps: int = 32,
+    hop_start_overlap: float = 0.3,
+) -> dict:
+    from .novelty import HopfieldParams  # local import to avoid circulars
+    run_dir = Path(run_dir)
+    out = _ensure_dir(outdir or (run_dir / "exp07_report"))
+
+    series = compute_series_over_run(
+        run_dir,
+        K_old=int(K_old),
+        hop=HopfieldParams(
+            beta=float(hop_beta),
+            updates=int(hop_updates),
+            reps_per_archetype=int(hop_reps),
+            start_overlap=float(hop_start_overlap),
+            stochastic=True,
+            frequency=int(hop_frequency),
+        ),
+        detect_patience=2,
+    )
+
+    _save_json(out / "series.json", {
+        "T": int(series.T),
+        "K": int(series.K),
+        "K_old": int(series.K_old),
+        "t_detect": None if series.t_detect is None else int(series.t_detect),
+        "keff": series.keff.tolist(),
+        "gap": series.gap.tolist(),
+        "TV": series.TV.tolist(),
+        "L1": series.L1.tolist(),
+        "m_old": series.m_old.tolist(),
+        "m_new": series.m_new.tolist(),
+        "pi_hat": None if series.pi_hat is None else series.pi_hat.tolist(),
+        "pi_true": None if series.pi_true is None else series.pi_true.tolist(),
+        "eps": None if getattr(series, 'eps', None) is None else series.eps.tolist(),
+        "bound_2eps": None if getattr(series, 'bound_2eps', None) is None else series.bound_2eps.tolist(),
+    })
+
+    plot_timeseries(series, out / "fig_timeseries.png")
+    plot_pi_error_sns(series, out / "fig_pi_error.png")
+    plot_simplex_robust(series, out / "fig_simplex.png")
+
+    return {
+        "outdir": str(out),
+        "K": int(series.K),
+        "K_old": int(series.K_old),
+        "t_detect": None if series.t_detect is None else int(series.t_detect),
+        "T": int(series.T),
+        "figures": {
+            "timeseries": str(out / "fig_timeseries.png"),
+            "pi_error": str(out / "fig_pi_error.png"),
+            "simplex": str(out / "fig_simplex.png"),
+        },
+        "series_json": str(out / "series.json"),
+    }
+
+
