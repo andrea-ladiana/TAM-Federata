@@ -107,7 +107,7 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--K", type=int, default=3, help="Numero archetipi (deve essere 3 per Δ2)")
     p.add_argument("--rounds", type=int, default=12, help="Numero di round (T)")
     p.add_argument("--M-total", type=int, default=1200, help="Numero totale di esempi per la run")
-    p.add_argument("--w", type=float, default=0.5, help="Peso 'unsup' nel blend con memoria ebraica")
+    p.add_argument("--w", type=float, default=0.5, help="Peso 'unsup' nel blend con memoria ")
     p.add_argument("--binarize-thresh", type=float, default=None,
                    help="Soglia per binarizzazione {±1}; None => mediana globale")
 

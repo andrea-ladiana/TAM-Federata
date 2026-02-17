@@ -69,7 +69,7 @@ def single_round_step(
     # 1) stima unsup per round t
     J_unsup, M_eff = build_unsup_J_single(ETA_t, K=hp.K)
 
-    # 2) blending con memoria ebraica precedente (se presente)
+    # 2) blending con memoria  precedente (se presente)
     J_rec = blend_with_memory(J_unsup, xi_prev=xi_prev, w=hp.w)
 
     # 3) propagazione pseudo-inversa

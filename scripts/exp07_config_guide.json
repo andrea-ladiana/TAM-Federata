@@ -1,0 +1,264 @@
+{
+  "experiment_name": "Exp-07: Novelty Emergence - Entropy-Based Adaptive Damping",
+  "description": "Comparison of entropy-based damping strategies for novelty detection",
+  
+  "recommended_presets": {
+    "quick_test": {
+      "description": "Fast test with minimal resources",
+      "command": "python scripts/exp07_novelty_emergence.py --strategy baseline adaptive_ema --n-seeds 3 --n-batch 12 --K-old 2 --K-new 2 --N 200 --no-progress"
+    },
+    
+    "standard_comparison": {
+      "description": "Standard comparison of all strategies",
+      "command": "python scripts/exp07_novelty_emergence.py --strategy baseline ema rate_limit momentum adaptive_ema --n-seeds 6 --n-batch 24"
+    },
+    
+    "aggressive_damping": {
+      "description": "Prevent catastrophic forgetting with strong smoothing",
+      "command": "python scripts/exp07_novelty_emergence.py --strategy ema rate_limit --alpha-ema 0.15 --max-delta-w 0.08 --n-seeds 8"
+    },
+    
+    "fast_adaptation": {
+      "description": "Rapid novelty detection with high reactivity",
+      "command": "python scripts/exp07_novelty_emergence.py --strategy adaptive_ema --alpha-min 0.3 --alpha-max-adapt 0.7 --n-seeds 8"
+    },
+    
+    "hard_scenario": {
+      "description": "Challenging scenario with many archetypes",
+      "command": "python scripts/exp07_novelty_emergence.py --strategy baseline adaptive_ema --K-old 5 --K-new 4 --N 600 --L 5 --n-batch 32 --t-intro 16 --ramp-len 6 --n-seeds 10"
+    }
+  },
+  
+  "strategies": {
+    "baseline": {
+      "type": "fixed",
+      "description": "Fixed weight w_baseline, no adaptation",
+      "parameters": {
+        "w_baseline": 0.8
+      },
+      "pros": ["Simple", "Stable", "Predictable"],
+      "cons": ["No adaptation", "Poor novelty detection"],
+      "use_when": "Baseline comparison"
+    },
+    
+    "ema": {
+      "type": "damped_adaptive",
+      "description": "Exponential Moving Average smoothing",
+      "parameters": {
+        "alpha_ema": 0.3
+      },
+      "pros": ["Smooth transitions", "No jumps"],
+      "cons": ["Fixed smoothing rate"],
+      "use_when": "General purpose adaptive learning",
+      "tuning": {
+        "alpha_ema": {
+          "low": [0.1, 0.2],
+          "medium": [0.3, 0.4],
+          "high": [0.5, 0.7]
+        }
+      }
+    },
+    
+    "rate_limit": {
+      "type": "damped_adaptive",
+      "description": "Hard clipping of weight change rate",
+      "parameters": {
+        "max_delta_w": 0.15
+      },
+      "pros": ["Prevents jumps", "Conservative"],
+      "cons": ["Can be slow to adapt"],
+      "use_when": "Catastrophic forgetting prevention",
+      "tuning": {
+        "max_delta_w": {
+          "very_conservative": 0.05,
+          "conservative": 0.1,
+          "moderate": 0.15,
+          "aggressive": 0.25
+        }
+      }
+    },
+    
+    "momentum": {
+      "type": "damped_adaptive",
+      "description": "Momentum-based smooth transitions",
+      "parameters": {
+        "momentum": 0.7
+      },
+      "pros": ["Balanced", "Smooth acceleration"],
+      "cons": ["Can overshoot"],
+      "use_when": "Need responsive but stable adaptation",
+      "tuning": {
+        "momentum": {
+          "low_inertia": [0.3, 0.5],
+          "medium_inertia": [0.6, 0.7],
+          "high_inertia": [0.8, 0.9]
+        }
+      }
+    },
+    
+    "adaptive_ema": {
+      "type": "damped_adaptive",
+      "description": "EMA with entropy-based adaptive alpha (RECOMMENDED)",
+      "parameters": {
+        "alpha_min": 0.1,
+        "alpha_max": 0.5
+      },
+      "pros": ["Context-aware", "Auto-detects shifts", "Best novelty detection"],
+      "cons": ["Slightly more complex"],
+      "use_when": "Novelty emergence, distributional shifts",
+      "tuning": {
+        "conservative": {
+          "alpha_min": 0.05,
+          "alpha_max": 0.3
+        },
+        "balanced": {
+          "alpha_min": 0.1,
+          "alpha_max": 0.5
+        },
+        "aggressive": {
+          "alpha_min": 0.2,
+          "alpha_max": 0.7
+        }
+      }
+    }
+  },
+  
+  "parameter_guide": {
+    "model": {
+      "K_old": {
+        "description": "Number of initial archetypes",
+        "typical_range": [2, 10],
+        "default": 3
+      },
+      "K_new": {
+        "description": "Number of new archetypes to introduce",
+        "typical_range": [1, 10],
+        "default": 3
+      },
+      "N": {
+        "description": "Pattern dimension",
+        "typical_range": [100, 1000],
+        "default": 400,
+        "note": "Higher N = more complex patterns, slower computation"
+      },
+      "L": {
+        "description": "Number of federated clients",
+        "typical_range": [2, 10],
+        "default": 3
+      },
+      "n_batch": {
+        "description": "Total number of training rounds",
+        "typical_range": [12, 50],
+        "default": 24
+      },
+      "r_ex": {
+        "description": "Signal-to-noise ratio",
+        "typical_range": [0.5, 0.95],
+        "default": 0.8,
+        "note": "Higher = cleaner data"
+      }
+    },
+    
+    "novelty": {
+      "t_intro": {
+        "description": "Round when new archetypes are introduced",
+        "typical_range": "n_batch // 2",
+        "default": 12
+      },
+      "ramp_len": {
+        "description": "Number of rounds for gradual introduction",
+        "typical_range": [2, 8],
+        "default": 4,
+        "note": "Longer ramp = smoother transition"
+      },
+      "alpha_max": {
+        "description": "Maximum fraction allocated to new archetypes",
+        "typical_range": [0.3, 0.7],
+        "default": 0.5
+      }
+    }
+  },
+  
+  "metrics_explained": {
+    "K_eff": "Effective number of archetypes detected (should increase at t_intro)",
+    "m_old": "Retrieval quality for old archetypes (should stay high)",
+    "m_new": "Retrieval quality for new archetypes (should increase after t_intro)",
+    "spectral_gap": "Gap in eigenvalue spectrum at K_old boundary (should decrease at t_intro)",
+    "tv_error": "Total variation distance for mixing probability estimation",
+    "w_value": "Adaptive weight evolution (higher = more trust in new data)",
+    "H_AB": "Sign-consistency entropy (higher = more distributional change)",
+    "detection_rate": "Fraction of seeds successfully detecting new archetypes"
+  },
+  
+  "expected_behavior": {
+    "before_t_intro": {
+      "K_eff": "Should be close to K_old",
+      "m_old": "Should be high (>0.8)",
+      "m_new": "Not applicable or low",
+      "w_value": "Baseline: constant; Adaptive: low (stable distribution)",
+      "H_AB": "Low (sign consistency high)"
+    },
+    
+    "at_t_intro": {
+      "K_eff": "Should start increasing",
+      "spectral_gap": "Should decrease (new modes appearing)",
+      "tv_error": "May spike (distribution shift)",
+      "w_value": "Adaptive strategies should increase",
+      "H_AB": "Should spike (sign mismatch)"
+    },
+    
+    "after_ramp": {
+      "K_eff": "Should reach K_old + K_new",
+      "m_old": "Should remain high",
+      "m_new": "Should reach high values (>0.7)",
+      "w_value": "Should stabilize",
+      "H_AB": "Should decrease (new stable state)"
+    }
+  },
+  
+  "troubleshooting": {
+    "low_detection_rate": {
+      "symptoms": "K_eff doesn't increase, m_new stays low",
+      "causes": ["Too aggressive smoothing", "Insufficient rounds", "Small alpha_max"],
+      "solutions": [
+        "Increase alpha_ema (e.g., 0.4-0.5)",
+        "Increase alpha_max_adapt (e.g., 0.6-0.7)",
+        "Reduce max_delta_w (allow larger changes)",
+        "Increase n_batch",
+        "Increase alpha_max (novelty schedule)"
+      ]
+    },
+    
+    "m_old_degradation": {
+      "symptoms": "m_old drops after t_intro",
+      "causes": ["Catastrophic forgetting", "Too fast adaptation"],
+      "solutions": [
+        "Decrease alpha_ema (e.g., 0.15-0.2)",
+        "Decrease max_delta_w (e.g., 0.08-0.1)",
+        "Use rate_limit strategy",
+        "Reduce alpha_max (less allocation to new)"
+      ]
+    },
+    
+    "w_oscillations": {
+      "symptoms": "w_value jumps erratically",
+      "causes": ["Noisy entropy signals", "Too reactive"],
+      "solutions": [
+        "Use rate_limit with small max_delta_w",
+        "Decrease alpha_ema",
+        "Use momentum strategy with high beta"
+      ]
+    },
+    
+    "slow_convergence": {
+      "symptoms": "Takes many rounds after t_intro to detect",
+      "causes": ["Over-smoothing", "Conservative parameters"],
+      "solutions": [
+        "Switch to adaptive_ema",
+        "Increase alpha_max_adapt",
+        "Reduce momentum coefficient",
+        "Increase max_delta_w"
+      ]
+    }
+  }
+}

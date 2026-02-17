@@ -9,7 +9,7 @@ Pipeline per seed
 3) Genera ETA e labels in SINGLE (L, T, M_c, N).
 4) Per ogni round t:
    - Estima J_unsup su ETA[:, t, :, :]
-   - Blend con memoria ebraica J(ξ_prev) (se t>0) con peso w
+   - Blend con memoria  J(ξ_prev) (se t>0) con peso w
    - Propagation pseudo-inversa J -> J_KS
    - Cut spettrale (τ) e disentangling (TAM) → ξ_r^(t), magnetizzazioni
    - Metriche: FRO(J_KS,J*), retrieval (Hungarian), K_eff (shuffle/MP), coverage(t)
@@ -77,6 +77,7 @@ class SeedResult:
     J_server_final: np.ndarray
     xi_ref_final: np.ndarray
     exposure_counts: np.ndarray
+    round_candidates: List[np.ndarray]
     xi_true: Optional[np.ndarray] = None  # aggiunto per uso post-hoc (Hopfield)
 
 
@@ -275,9 +276,14 @@ def run_exp01_single(
     do_plot: bool = True,
     reuse_saved: bool = True,
     force_run: bool = False,
+    xi_true_external: Optional[np.ndarray] = None,
 ) -> Dict[str, object]:
     """
     Esegue exp_01 in modalità SINGLE su una lista di seed.
+    Parametri aggiuntivi
+    --------------------
+    xi_true_external : opzionale np.ndarray
+        Archetipi veri (K, N) da riutilizzare per tutti i seed; se None vengono generati ex-novo.
 
     Returns
     -------
@@ -304,6 +310,17 @@ def run_exp01_single(
     if seeds is None:
         seeds = [hp.seed_base + i for i in range(hp.n_seeds)]
 
+    xi_template: Optional[np.ndarray] = None
+    if xi_true_external is not None:
+        xi_template = np.asarray(xi_true_external, dtype=np.int32)
+        if xi_template.shape != (hp.K, hp.N):
+            raise ValueError(
+                f"xi_true_external shape {xi_template.shape} non compatibile con (K={hp.K}, N={hp.N})."
+            )
+        unique_vals = set(np.unique(xi_template).tolist())
+        if not unique_vals <= {-1, 1}:
+            raise ValueError("xi_true_external deve contenere valori in {±1}.")
+
     per_seed: List[SeedResult] = []
 
     # Optional multithread path over seeds; controlled by hp.n_workers (default 1)
@@ -318,8 +335,11 @@ def run_exp01_single(
 
         def _run_one_seed(seed: int) -> SeedResult:
             rng = np.random.default_rng(seed)
-            # 1) archetipi veri (K,N) 9 NB: functions.gen_patterns(N, P)
-            xi_true = np.asarray(gen_patterns(hp.N, hp.K), dtype=np.int32)
+            # 1) archetipi veri (K,N)
+            if xi_template is not None:
+                xi_true = np.asarray(xi_template, dtype=np.int32).copy()
+            else:
+                xi_true = np.asarray(gen_patterns(hp.N, hp.K), dtype=np.int32)
             # 2) ideal J* (pseudo-inversa)
             J_star = np.asarray(JK_real(xi_true), dtype=np.float32)
 
@@ -344,6 +364,7 @@ def run_exp01_single(
             series: List[RoundLog] = []
             xi_ref: Optional[np.ndarray] = None
             J_server_final: Optional[np.ndarray] = None
+            round_candidates: List[np.ndarray] = []
 
             for t in range(hp.n_batch):
                 # Dati round t
@@ -386,6 +407,8 @@ def run_exp01_single(
 
                 series.append(RoundLog(retrieval=retr, fro=fro, keff=int(K_eff), coverage=float(cov)))
 
+                round_candidates.append(xi_r.astype(int))
+
                 # memoria per round successivo (prendi primi K candidati)
                 if xi_r.shape[0] >= hp.K:
                     xi_ref = xi_r[: hp.K].astype(int)
@@ -404,6 +427,7 @@ def run_exp01_single(
                 J_server_final=J_server_final.astype(np.float32),
                 xi_ref_final=xi_ref.astype(int),
                 exposure_counts=expo_counts.astype(int),
+                round_candidates=round_candidates,
                 xi_true=xi_true.astype(int),
             )
 
@@ -415,8 +439,11 @@ def run_exp01_single(
     # loop seeds
     for seed in seeds:
         rng = np.random.default_rng(seed)
-        # 1) archetipi veri (K,N) — NB: functions.gen_patterns(N, P)
-        xi_true = np.asarray(gen_patterns(hp.N, hp.K), dtype=np.int32)
+        # 1) archetipi veri (K,N)
+        if xi_template is not None:
+            xi_true = np.asarray(xi_template, dtype=np.int32).copy()
+        else:
+            xi_true = np.asarray(gen_patterns(hp.N, hp.K), dtype=np.int32)
         # 2) ideal J* (pseudo-inversa)
         J_star = np.asarray(JK_real(xi_true), dtype=np.float32)
 
@@ -441,6 +468,7 @@ def run_exp01_single(
         series: List[RoundLog] = []
         xi_ref: Optional[np.ndarray] = None
         J_server_final: Optional[np.ndarray] = None
+        round_candidates: List[np.ndarray] = []
 
         for t in range(hp.n_batch):
             # Dati round t
@@ -482,6 +510,7 @@ def run_exp01_single(
             fro = frobenius_relative(J_KS, J_star)
 
             series.append(RoundLog(retrieval=retr, fro=fro, keff=int(K_eff), coverage=float(cov)))
+            round_candidates.append(xi_r.astype(int))
 
             # memoria per round successivo (prendi primi K candidati)
             if xi_r.shape[0] >= hp.K:
@@ -502,6 +531,7 @@ def run_exp01_single(
                 J_server_final=J_server_final.astype(np.float32),
                 xi_ref_final=xi_ref.astype(int),
                 exposure_counts=expo_counts.astype(int),
+                round_candidates=round_candidates,
                 xi_true=xi_true.astype(int),
             )
         )

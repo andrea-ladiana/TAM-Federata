@@ -338,11 +338,12 @@ def panel4x(
     simplex_style: str = "modern",  # 'modern' oppure 'legacy' (passato a plot_simplex_trajectory)
     figsize: Tuple[int, int] = (14, 8),
     suptitle: Optional[str] = None,
-    bottom_right_mode: str = "exposure",  # 'phase' (legacy), 'drift', 'exposure'
+    bottom_right_mode: str = "exposure",  # 'phase' (legacy), 'drift', 'exposure', 'adaptive_w'
+    w_series: Optional[np.ndarray] = None,  # (T,) adaptive w values per round (for 'adaptive_w' mode)
 ) -> Tuple[Figure, Dict[str, Any]]:
     """
     Crea il pannello 4×:
-      [0,0] simplesso; [0,1] timeseries m; [1,0] heatmap m; [1,1] phase diagram.
+      [0,0] simplesso; [0,1] timeseries m; [1,0] heatmap m; [1,1] phase diagram / drift / exposure / adaptive_w.
     Restituisce fig e dict con info (es. lag/amplitude stimati).
     """
     fig, axs = plt.subplots(2, 2, figsize=figsize)
@@ -406,6 +407,23 @@ def panel4x(
         ax_br.set_title("Cumulative exposure (π accumulata)")
         ax_br.grid(alpha=0.2)
         ax_br.legend(fontsize=9, ncol=2)
+    elif bottom_right_mode == "adaptive_w":
+        # Adaptive w trajectory over rounds (for entropy-based or other adaptive policies)
+        if w_series is not None and len(w_series) > 0:
+            w_arr = np.asarray(w_series, dtype=float)
+            rounds = np.arange(len(w_arr))
+            ax_br.plot(rounds, w_arr, marker="o", lw=2.0, color="darkblue", label="w_t")
+            ax_br.axhline(y=0.5, color="gray", ls="--", lw=1.0, alpha=0.5, label="w=0.5")
+            ax_br.set_xlabel("round")
+            ax_br.set_ylabel("w (blending weight)")
+            ax_br.set_title("Adaptive w trajectory")
+            ax_br.set_ylim(-0.05, 1.05)
+            ax_br.grid(alpha=0.2)
+            ax_br.legend(fontsize=9)
+            info["w_series"] = w_arr.tolist()
+        else:
+            ax_br.axis("off")
+            ax_br.text(0.5, 0.5, "No w_series provided for adaptive_w mode", ha="center", va="center")
     else:
         ax_br.axis("off")
         ax_br.text(0.5, 0.5, f"Mode '{bottom_right_mode}' unknown", ha="center", va="center")

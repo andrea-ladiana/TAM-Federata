@@ -925,7 +925,7 @@ Exp-06 (single-only) — pipeline core (dataset non strutturato).
 Questo modulo implementa un motore round-by-round che:
   1) genera (o riceve) un dataset sintetico binario in {±1}, con mixing schedule pis (T,K)
   2) per ogni round t:
-        - stima J_unsup(t) (single) e blend con memoria ebraica (J_hebb(xi_prev)) pesata da w
+        - stima J_unsup(t) (single) e blend con memoria  (J_hebb(xi_prev)) pesata da w
         - propaga J -> J_KS (pseudo-inversa iterativa)
         - taglio spettrale + disentangling TAM -> xi_r(t)
         - allinea i candidati a xi_true (greedy senza SciPy) e aggiorna xi_ref (per il blend successivo)

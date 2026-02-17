@@ -1,0 +1,855 @@
+{
+  "preset": "full",
+  "replicates": 10,
+  "cushion": 0.02,
+  "summary": [
+    {
+      "N": 256,
+      "q": 0.30011723329425555,
+      "n_samples": 853,
+      "K": 2,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.3
+      },
+      "mp_false": 11.699999809265137,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 13.699999809265137,
+      "def_keff": 1.0
+    },
+    {
+      "N": 256,
+      "q": 0.30011723329425555,
+      "n_samples": 853,
+      "K": 2,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.3
+      },
+      "mp_false": 11.300000190734863,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 13.300000190734863,
+      "def_keff": 1.2999999523162842
+    },
+    {
+      "N": 256,
+      "q": 0.30011723329425555,
+      "n_samples": 853,
+      "K": 4,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.3
+      },
+      "mp_false": 9.300000190734863,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 13.300000190734863,
+      "def_keff": 1.600000023841858
+    },
+    {
+      "N": 256,
+      "q": 0.30011723329425555,
+      "n_samples": 853,
+      "K": 4,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.3
+      },
+      "mp_false": 9.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 13.0,
+      "def_keff": 2.4000000953674316
+    },
+    {
+      "N": 256,
+      "q": 0.30011723329425555,
+      "n_samples": 853,
+      "K": 2,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.6
+      },
+      "mp_false": 32.400001525878906,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 34.400001525878906,
+      "def_keff": 0.0
+    },
+    {
+      "N": 256,
+      "q": 0.30011723329425555,
+      "n_samples": 853,
+      "K": 2,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.6
+      },
+      "mp_false": 32.29999923706055,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 34.29999923706055,
+      "def_keff": 0.10000000149011612
+    },
+    {
+      "N": 256,
+      "q": 0.30011723329425555,
+      "n_samples": 853,
+      "K": 4,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.6
+      },
+      "mp_false": 30.399999618530273,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 34.400001525878906,
+      "def_keff": 0.0
+    },
+    {
+      "N": 256,
+      "q": 0.30011723329425555,
+      "n_samples": 853,
+      "K": 4,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.6
+      },
+      "mp_false": 30.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 34.0,
+      "def_keff": 0.20000000298023224
+    },
+    {
+      "N": 256,
+      "q": 0.30011723329425555,
+      "n_samples": 853,
+      "K": 2,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "block",
+        "variances": [
+          1.0,
+          1.5,
+          2.0,
+          0.7
+        ]
+      },
+      "mp_false": 0.0,
+      "def_false": 0.10000000149011612,
+      "white_false": 0.0,
+      "mp_keff": 1.899999976158142,
+      "def_keff": 2.0999999046325684
+    },
+    {
+      "N": 256,
+      "q": 0.30011723329425555,
+      "n_samples": 853,
+      "K": 2,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "block",
+        "variances": [
+          1.0,
+          1.5,
+          2.0,
+          0.7
+        ]
+      },
+      "mp_false": 0.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 2.0,
+      "def_keff": 2.0
+    },
+    {
+      "N": 256,
+      "q": 0.30011723329425555,
+      "n_samples": 853,
+      "K": 4,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "block",
+        "variances": [
+          1.0,
+          1.5,
+          2.0,
+          0.7
+        ]
+      },
+      "mp_false": 0.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 3.9000000953674316,
+      "def_keff": 3.9000000953674316
+    },
+    {
+      "N": 256,
+      "q": 0.30011723329425555,
+      "n_samples": 853,
+      "K": 4,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "block",
+        "variances": [
+          1.0,
+          1.5,
+          2.0,
+          0.7
+        ]
+      },
+      "mp_false": 0.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 4.0,
+      "def_keff": 4.0
+    },
+    {
+      "N": 256,
+      "q": 0.5995316159250585,
+      "n_samples": 427,
+      "K": 2,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.3
+      },
+      "mp_false": 4.699999809265137,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 6.699999809265137,
+      "def_keff": 0.6000000238418579
+    },
+    {
+      "N": 256,
+      "q": 0.5995316159250585,
+      "n_samples": 427,
+      "K": 2,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.3
+      },
+      "mp_false": 4.900000095367432,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 6.900000095367432,
+      "def_keff": 0.6000000238418579
+    },
+    {
+      "N": 256,
+      "q": 0.5995316159250585,
+      "n_samples": 427,
+      "K": 4,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.3
+      },
+      "mp_false": 3.0999999046325684,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 7.099999904632568,
+      "def_keff": 0.699999988079071
+    },
+    {
+      "N": 256,
+      "q": 0.5995316159250585,
+      "n_samples": 427,
+      "K": 4,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.3
+      },
+      "mp_false": 3.4000000953674316,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 7.400000095367432,
+      "def_keff": 1.2999999523162842
+    },
+    {
+      "N": 256,
+      "q": 0.5995316159250585,
+      "n_samples": 427,
+      "K": 2,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.6
+      },
+      "mp_false": 21.600000381469727,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 23.600000381469727,
+      "def_keff": 0.20000000298023224
+    },
+    {
+      "N": 256,
+      "q": 0.5995316159250585,
+      "n_samples": 427,
+      "K": 2,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.6
+      },
+      "mp_false": 21.399999618530273,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 23.399999618530273,
+      "def_keff": 0.0
+    },
+    {
+      "N": 256,
+      "q": 0.5995316159250585,
+      "n_samples": 427,
+      "K": 4,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.6
+      },
+      "mp_false": 19.200000762939453,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 23.200000762939453,
+      "def_keff": 0.10000000149011612
+    },
+    {
+      "N": 256,
+      "q": 0.5995316159250585,
+      "n_samples": 427,
+      "K": 4,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.6
+      },
+      "mp_false": 19.399999618530273,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 23.399999618530273,
+      "def_keff": 0.10000000149011612
+    },
+    {
+      "N": 256,
+      "q": 0.5995316159250585,
+      "n_samples": 427,
+      "K": 2,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "block",
+        "variances": [
+          1.0,
+          1.5,
+          2.0,
+          0.7
+        ]
+      },
+      "mp_false": 0.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 1.100000023841858,
+      "def_keff": 1.7000000476837158
+    },
+    {
+      "N": 256,
+      "q": 0.5995316159250585,
+      "n_samples": 427,
+      "K": 2,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "block",
+        "variances": [
+          1.0,
+          1.5,
+          2.0,
+          0.7
+        ]
+      },
+      "mp_false": 0.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 1.7000000476837158,
+      "def_keff": 1.899999976158142
+    },
+    {
+      "N": 256,
+      "q": 0.5995316159250585,
+      "n_samples": 427,
+      "K": 4,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "block",
+        "variances": [
+          1.0,
+          1.5,
+          2.0,
+          0.7
+        ]
+      },
+      "mp_false": 0.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 1.600000023841858,
+      "def_keff": 2.200000047683716
+    },
+    {
+      "N": 256,
+      "q": 0.5995316159250585,
+      "n_samples": 427,
+      "K": 4,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "block",
+        "variances": [
+          1.0,
+          1.5,
+          2.0,
+          0.7
+        ]
+      },
+      "mp_false": 0.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 2.799999952316284,
+      "def_keff": 3.0
+    },
+    {
+      "N": 512,
+      "q": 0.29994141769185706,
+      "n_samples": 1707,
+      "K": 2,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.3
+      },
+      "mp_false": 24.799999237060547,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 26.799999237060547,
+      "def_keff": 1.0
+    },
+    {
+      "N": 512,
+      "q": 0.29994141769185706,
+      "n_samples": 1707,
+      "K": 2,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.3
+      },
+      "mp_false": 23.899999618530273,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 25.899999618530273,
+      "def_keff": 1.899999976158142
+    },
+    {
+      "N": 512,
+      "q": 0.29994141769185706,
+      "n_samples": 1707,
+      "K": 4,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.3
+      },
+      "mp_false": 23.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 27.0,
+      "def_keff": 1.5
+    },
+    {
+      "N": 512,
+      "q": 0.29994141769185706,
+      "n_samples": 1707,
+      "K": 4,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.3
+      },
+      "mp_false": 22.600000381469727,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 26.600000381469727,
+      "def_keff": 3.299999952316284
+    },
+    {
+      "N": 512,
+      "q": 0.29994141769185706,
+      "n_samples": 1707,
+      "K": 2,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.6
+      },
+      "mp_false": 66.30000305175781,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 68.30000305175781,
+      "def_keff": 0.0
+    },
+    {
+      "N": 512,
+      "q": 0.29994141769185706,
+      "n_samples": 1707,
+      "K": 2,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.6
+      },
+      "mp_false": 66.30000305175781,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 68.30000305175781,
+      "def_keff": 0.10000000149011612
+    },
+    {
+      "N": 512,
+      "q": 0.29994141769185706,
+      "n_samples": 1707,
+      "K": 4,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.6
+      },
+      "mp_false": 64.5,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 68.5,
+      "def_keff": 0.10000000149011612
+    },
+    {
+      "N": 512,
+      "q": 0.29994141769185706,
+      "n_samples": 1707,
+      "K": 4,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.6
+      },
+      "mp_false": 64.5,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 68.5,
+      "def_keff": 0.0
+    },
+    {
+      "N": 512,
+      "q": 0.29994141769185706,
+      "n_samples": 1707,
+      "K": 2,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "block",
+        "variances": [
+          1.0,
+          1.5,
+          2.0,
+          0.7
+        ]
+      },
+      "mp_false": 0.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 2.0,
+      "def_keff": 2.0
+    },
+    {
+      "N": 512,
+      "q": 0.29994141769185706,
+      "n_samples": 1707,
+      "K": 2,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "block",
+        "variances": [
+          1.0,
+          1.5,
+          2.0,
+          0.7
+        ]
+      },
+      "mp_false": 0.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 2.0,
+      "def_keff": 2.0
+    },
+    {
+      "N": 512,
+      "q": 0.29994141769185706,
+      "n_samples": 1707,
+      "K": 4,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "block",
+        "variances": [
+          1.0,
+          1.5,
+          2.0,
+          0.7
+        ]
+      },
+      "mp_false": 0.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 4.0,
+      "def_keff": 4.0
+    },
+    {
+      "N": 512,
+      "q": 0.29994141769185706,
+      "n_samples": 1707,
+      "K": 4,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "block",
+        "variances": [
+          1.0,
+          1.5,
+          2.0,
+          0.7
+        ]
+      },
+      "mp_false": 0.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 4.0,
+      "def_keff": 4.0
+    },
+    {
+      "N": 512,
+      "q": 0.6002344665885111,
+      "n_samples": 853,
+      "K": 2,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.3
+      },
+      "mp_false": 11.600000381469727,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 13.600000381469727,
+      "def_keff": 0.20000000298023224
+    },
+    {
+      "N": 512,
+      "q": 0.6002344665885111,
+      "n_samples": 853,
+      "K": 2,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.3
+      },
+      "mp_false": 11.899999618530273,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 13.899999618530273,
+      "def_keff": 1.100000023841858
+    },
+    {
+      "N": 512,
+      "q": 0.6002344665885111,
+      "n_samples": 853,
+      "K": 4,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.3
+      },
+      "mp_false": 9.800000190734863,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 13.800000190734863,
+      "def_keff": 0.20000000298023224
+    },
+    {
+      "N": 512,
+      "q": 0.6002344665885111,
+      "n_samples": 853,
+      "K": 4,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.3
+      },
+      "mp_false": 10.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 14.0,
+      "def_keff": 1.399999976158142
+    },
+    {
+      "N": 512,
+      "q": 0.6002344665885111,
+      "n_samples": 853,
+      "K": 2,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.6
+      },
+      "mp_false": 45.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 47.0,
+      "def_keff": 0.20000000298023224
+    },
+    {
+      "N": 512,
+      "q": 0.6002344665885111,
+      "n_samples": 853,
+      "K": 2,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.6
+      },
+      "mp_false": 44.79999923706055,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 46.79999923706055,
+      "def_keff": 0.0
+    },
+    {
+      "N": 512,
+      "q": 0.6002344665885111,
+      "n_samples": 853,
+      "K": 4,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.6
+      },
+      "mp_false": 43.099998474121094,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 47.099998474121094,
+      "def_keff": 0.10000000149011612
+    },
+    {
+      "N": 512,
+      "q": 0.6002344665885111,
+      "n_samples": 853,
+      "K": 4,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "ar",
+        "rho": 0.6
+      },
+      "mp_false": 43.20000076293945,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 47.20000076293945,
+      "def_keff": 0.20000000298023224
+    },
+    {
+      "N": 512,
+      "q": 0.6002344665885111,
+      "n_samples": 853,
+      "K": 2,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "block",
+        "variances": [
+          1.0,
+          1.5,
+          2.0,
+          0.7
+        ]
+      },
+      "mp_false": 0.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 1.5,
+      "def_keff": 1.5
+    },
+    {
+      "N": 512,
+      "q": 0.6002344665885111,
+      "n_samples": 853,
+      "K": 2,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "block",
+        "variances": [
+          1.0,
+          1.5,
+          2.0,
+          0.7
+        ]
+      },
+      "mp_false": 0.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 1.899999976158142,
+      "def_keff": 2.0
+    },
+    {
+      "N": 512,
+      "q": 0.6002344665885111,
+      "n_samples": 853,
+      "K": 4,
+      "kappa": 1.2,
+      "noise": {
+        "kind": "block",
+        "variances": [
+          1.0,
+          1.5,
+          2.0,
+          0.7
+        ]
+      },
+      "mp_false": 0.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 2.200000047683716,
+      "def_keff": 2.5999999046325684
+    },
+    {
+      "N": 512,
+      "q": 0.6002344665885111,
+      "n_samples": 853,
+      "K": 4,
+      "kappa": 1.5,
+      "noise": {
+        "kind": "block",
+        "variances": [
+          1.0,
+          1.5,
+          2.0,
+          0.7
+        ]
+      },
+      "mp_false": 0.0,
+      "def_false": 0.0,
+      "white_false": 0.0,
+      "mp_keff": 3.700000047683716,
+      "def_keff": 3.799999952316284
+    }
+  ]
+}

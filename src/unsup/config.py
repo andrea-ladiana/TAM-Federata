@@ -3,7 +3,7 @@
 Configurazione e iperparametri (single mode only).
 
 Questo modulo centralizza gli iperparametri usati negli esperimenti in modalità
-*single* (nessuna accumulazione dei dati tra i round, a parte la memoria Ebraica
+*single* (nessuna accumulazione dei dati tra i round, a parte la memoria 
 da round t-1 per il blending).
 
 Note:
@@ -62,7 +62,7 @@ class HyperParams:
     K_per_client: Optional[int] = None  # se None -> ceil(K / L)
 
     # --- blending e stima single-round ---
-    w: float = 0.4  # peso dell'unsupervised vs memoria ebraica del round precedente
+    w: float = 0.4  # peso dell'unsupervised vs memoria  del round precedente
 
     # --- modalità (hard-lock) ---
     mode: Mode = "single"

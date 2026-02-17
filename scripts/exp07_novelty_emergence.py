@@ -8,9 +8,15 @@ di nuovi archetipi durante il training federato in modalità SINGLE.
 
 Obiettivi:
 - Simulare l'emergenza graduale di nuovi archetipi (K_old -> K_old + K_new)
-- Confrontare diverse strategie di adattamento (baseline vs reattiva)
+- Confrontare diverse strategie di adattamento con metodi entropy-based damped
 - Generare plot significativi: K_eff, retrieval, gap spettrale, mixing error
 - Utilizzare la pipeline TAM standard della codebase
+
+Strategie Adattive Disponibili (via CLI):
+- ema: Exponential Moving Average smoothing
+- rate_limit: Hard clipping of change rate
+- momentum: Momentum-based smooth transitions  
+- adaptive_ema: EMA with adaptive alpha based on uncertainty
 """
 from __future__ import annotations
 
@@ -22,6 +28,7 @@ import sys
 import json
 import math
 import time
+import argparse
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple, Literal
@@ -52,6 +59,7 @@ from src.unsup.functions import (
 )
 from src.unsup.dynamics import dis_check
 from src.narch.novelty import novelty_schedule
+from src.narch.adaptive_w_exp07 import compute_adaptive_w
 
 # ---------------------------------------------------------------------
 # Hyperparameters following the pattern of other experiments
@@ -59,10 +67,10 @@ from src.narch.novelty import novelty_schedule
 @dataclass
 class HyperParams:
     # Model / dataset
-    L: int = 3                 # clients
-    K_old: int = 3             # initial archetypes
-    K_new: int = 3             # new archetypes to introduce
-    N: int = 400               # pattern dimension
+    L: int = 5                 # clients
+    K_old: int = 10             # initial archetypes
+    K_new: int = 20             # new archetypes to introduce
+    N: int = 1000               # pattern dimension
     n_batch: int = 24          # total rounds
     M_total: int = 2400        # total examples budget
     r_ex: float = 0.8          # signal-to-noise ratio
@@ -74,10 +82,15 @@ class HyperParams:
     new_visibility_frac: float = 1.0  # fraction of clients that see new archetypes
 
     # Federated learning parameters
-    w_baseline: float = 0.8    # baseline memory weight
-    w_adaptive_min: float = 0.6
-    w_adaptive_max: float = 0.95
-    ema_alpha: float = 0.3     # EMA coefficient for adaptive strategy
+    w_baseline: float = 0.8    # baseline memory weight (non-adaptive)
+    
+    # Adaptive damping parameters (for entropy-based strategies)
+    damping_mode: str = "ema"  # ema, rate_limit, momentum, adaptive_ema
+    alpha_ema: float = 0.3     # EMA coefficient
+    max_delta_w: float = 0.15  # Rate limit max change
+    momentum: float = 0.7      # Momentum coefficient
+    alpha_min: float = 0.1     # Adaptive EMA min alpha
+    alpha_max_adapt: float = 0.5  # Adaptive EMA max alpha
 
     # TAM dynamics
     updates: int = 60
@@ -89,7 +102,7 @@ class HyperParams:
     detect_patience: int = 2   # rounds to wait before expanding K
 
     # Experiment settings
-    n_seeds: int = 6
+    n_seeds: int = 10
     seed_base: int = 200001
     progress_seeds: bool = True
     progress_rounds: bool = True
@@ -211,10 +224,18 @@ def estimate_pi_hat_from_examples(xi_aligned: np.ndarray, E_round: np.ndarray) -
 def run_one_seed_strategy(
     hp: HyperParams,
     seed: int,
-    strategy: Literal["baseline", "adaptive"],
+    strategy: Literal["baseline", "ema", "rate_limit", "momentum", "adaptive_ema"],
     exp_dir: Path,
 ) -> Dict[str, Any]:
-    """Run simulation for one seed and strategy."""
+    """Run simulation for one seed and strategy.
+    
+    Strategies:
+    - baseline: Fixed w_baseline weight (no adaptation)
+    - ema: Exponential Moving Average damping
+    - rate_limit: Hard clipping of w change rate
+    - momentum: Momentum-based smooth transitions
+    - adaptive_ema: EMA with entropy-based adaptive alpha
+    """
     rng = np.random.default_rng(seed)
     
     # Generate true archetypes
@@ -238,10 +259,7 @@ def run_one_seed_strategy(
     K_work = hp.K_old  # Current working dimension
     detect_count = 0
     xi_ref = None
-    
-    # For adaptive strategy
-    J_ema = None
-    pi_hat_prev = None
+    w_prev = hp.w_baseline  # Initialize w for adaptive strategies
     
     # Series to track
     keff_series = []
@@ -250,6 +268,7 @@ def run_one_seed_strategy(
     m_new_series = []
     tv_series = []
     w_series = []
+    entropy_series = []  # Track H_AB for adaptive strategies
     
     # Main training loop
     round_iter = range(hp.n_batch)
@@ -274,8 +293,10 @@ def run_one_seed_strategy(
         J_unsup = np.mean(Js, axis=0)
         
         # Strategy-specific processing
+        H_AB = np.nan  # Track entropy for adaptive strategies
+        
         if strategy == "baseline":
-            # Simple weighted combination with previous memory
+            # Fixed weight - no adaptation
             if t == 0 or xi_ref is None:
                 J_rec = J_unsup.copy()
             else:
@@ -284,37 +305,42 @@ def run_one_seed_strategy(
             
             w_current = hp.w_baseline
             
-        else:  # adaptive strategy
-            # EMA on J_unsup
-            if J_ema is None:
-                J_ema = J_unsup.copy()
-            else:
-                J_ema = (1.0 - hp.ema_alpha) * J_ema + hp.ema_alpha * J_unsup
-            
-            # Adaptive weight based on stability
-            if pi_hat_prev is not None:
-                # Estimate current pi_hat
-                if xi_ref is not None:
-                    pi_hat_current = estimate_pi_hat_from_examples(xi_ref, E_t)
-                    tv_change = tv_distance(pi_hat_current, pi_hat_prev)
-                    
-                    # Adaptive weight: higher w when distribution is changing
-                    w_adaptive = hp.w_adaptive_min + (hp.w_adaptive_max - hp.w_adaptive_min) / (1.0 + np.exp(-10 * (tv_change - 0.1)))
-                else:
-                    w_adaptive = hp.w_baseline
-            else:
-                w_adaptive = hp.w_baseline
-            
-            # Combine with memory
+        else:  # Adaptive strategies using entropy-based damping
             if t == 0 or xi_ref is None:
-                J_rec = J_ema.copy()
+                # First round: use current data only
+                J_rec = J_unsup.copy()
+                w_current = hp.w_baseline
             else:
+                # Compute memory coupling matrix from reconstructed archetypes
                 J_hebb = unsupervised_J(np.asarray(xi_ref, dtype=np.float32), 1)
-                J_rec = w_adaptive * J_ema + (1.0 - w_adaptive) * J_hebb
+                J_hebb = 0.5 * (J_hebb + J_hebb.T)
+                np.fill_diagonal(J_hebb, 0.0)
+                
+                # Compute adaptive weight using entropy-based method
+                adaptive_result = compute_adaptive_w(
+                    J_memory=J_hebb,
+                    J_current=J_unsup,
+                    r_ex=hp.r_ex,
+                    w_prev=w_prev,
+                    damping_mode=strategy,
+                    alpha_ema=hp.alpha_ema,
+                    max_delta_w=hp.max_delta_w,
+                    momentum=hp.momentum,
+                    alpha_min=hp.alpha_min,
+                    alpha_max=hp.alpha_max_adapt,
+                )
+                
+                w_current = adaptive_result['w']
+                H_AB = adaptive_result['H_AB']
+                
+                # Combine using adaptive weight
+                J_rec = w_current * J_unsup + (1.0 - w_current) * J_hebb
             
-            w_current = w_adaptive
+            # Update w_prev for next round
+            w_prev = w_current
         
         w_series.append(w_current)
+        entropy_series.append(H_AB)
         
         # Propagation
         JKS = propagate_J(J_rec, iters=1, verbose=False)
@@ -422,8 +448,6 @@ def run_one_seed_strategy(
             pi_hat = estimate_pi_hat_from_examples(xi_ref[:K_total], E_t)
             pi_true = pi_schedule[t] / (pi_schedule[t].sum() + 1e-9)
             tv_err = tv_distance(pi_hat, pi_true)
-            
-            pi_hat_prev = pi_hat
         else:
             tv_err = np.nan
         
@@ -438,6 +462,7 @@ def run_one_seed_strategy(
         "m_new": m_new_series,
         "tv_error": tv_series,
         "w_values": w_series,
+        "entropy": entropy_series,
     }
 
 # ---------------------------------------------------------------------
@@ -461,6 +486,7 @@ def aggregate_and_plot(hp: HyperParams, results: List[Dict], exp_dir: Path) -> N
                 "m_new": r["m_new"][t],
                 "tv_error": r["tv_error"][t],
                 "w_value": r["w_values"][t],
+                "entropy": r["entropy"][t],
             })
     
     df = pd.DataFrame(records)
@@ -474,23 +500,31 @@ def aggregate_and_plot(hp: HyperParams, results: List[Dict], exp_dir: Path) -> N
         "m_new": ["mean", "std"],
         "tv_error": ["mean", "std"],
         "w_value": ["mean", "std"],
+        "entropy": ["mean", "std"],
     }).reset_index()
     
     # Flatten column names
     agg_df.columns = ["_".join(col).strip() if col[1] else col[0] for col in agg_df.columns]
     
+    # Get unique strategies
+    strategies = df["strategy"].unique()
+    
     # Create comprehensive plot
     sns.set_theme(style="whitegrid", palette=hp.palette)
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle(f"Exp-07: Novelty Emergence (K_old={hp.K_old}, K_new={hp.K_new})", fontsize=16)
+    fig, axes = plt.subplots(3, 2, figsize=(14, 16))
+    fig.suptitle(
+        f"Exp-07: Novelty Emergence (K_old={hp.K_old}, K_new={hp.K_new})\n"
+        f"Damping Mode: {hp.damping_mode}",
+        fontsize=16
+    )
     
     rounds = np.arange(hp.n_batch)
     
     # Panel A: K_eff detection
     ax = axes[0, 0]
-    for strategy in ["baseline", "adaptive"]:
+    for strategy in strategies:
         data = agg_df[agg_df["strategy"] == strategy]
-        ax.plot(data["round"], data["keff_mean"], linewidth=2, label=f"K_eff ({strategy})")
+        ax.plot(data["round"], data["keff_mean"], linewidth=2, label=f"{strategy}")
         ax.fill_between(data["round"], 
                        data["keff_mean"] - data["keff_std"], 
                        data["keff_mean"] + data["keff_std"], 
@@ -509,10 +543,10 @@ def aggregate_and_plot(hp: HyperParams, results: List[Dict], exp_dir: Path) -> N
     
     # Panel B: Retrieval performance
     ax = axes[0, 1]
-    for strategy in ["baseline", "adaptive"]:
+    for strategy in strategies:
         data = agg_df[agg_df["strategy"] == strategy]
-        ax.plot(data["round"], data["m_old_mean"], linewidth=2, label=f"Old archetypes ({strategy})")
-        ax.plot(data["round"], data["m_new_mean"], linewidth=2, linestyle="--", label=f"New archetypes ({strategy})")
+        ax.plot(data["round"], data["m_old_mean"], linewidth=2, label=f"Old ({strategy})")
+        ax.plot(data["round"], data["m_new_mean"], linewidth=2, linestyle="--", label=f"New ({strategy})")
     
     ax.axvline(hp.t_intro, color="red", linestyle="--", alpha=0.7)
     ax.axvspan(hp.t_intro, hp.t_intro + hp.ramp_len, alpha=0.1, color="red")
@@ -526,12 +560,12 @@ def aggregate_and_plot(hp: HyperParams, results: List[Dict], exp_dir: Path) -> N
     
     # Panel C: Spectral gap
     ax = axes[1, 0]
-    for strategy in ["baseline", "adaptive"]:
+    for strategy in strategies:
         data = agg_df[agg_df["strategy"] == strategy]
         valid_gap = ~np.isnan(data["gap_mean"])
         if valid_gap.any():
             ax.plot(data["round"][valid_gap], data["gap_mean"][valid_gap], 
-                   linewidth=2, label=f"Gap ({strategy})")
+                   linewidth=2, label=f"{strategy}")
     
     ax.axvline(hp.t_intro, color="red", linestyle="--", alpha=0.7)
     ax.axvspan(hp.t_intro, hp.t_intro + hp.ramp_len, alpha=0.1, color="red")
@@ -544,12 +578,12 @@ def aggregate_and_plot(hp: HyperParams, results: List[Dict], exp_dir: Path) -> N
     
     # Panel D: Mixing error
     ax = axes[1, 1]
-    for strategy in ["baseline", "adaptive"]:
+    for strategy in strategies:
         data = agg_df[agg_df["strategy"] == strategy]
         valid_tv = ~np.isnan(data["tv_error_mean"])
         if valid_tv.any():
             ax.plot(data["round"][valid_tv], data["tv_error_mean"][valid_tv], 
-                   linewidth=2, label=f"TV error ({strategy})")
+                   linewidth=2, label=f"{strategy}")
     
     ax.axvline(hp.t_intro, color="red", linestyle="--", alpha=0.7)
     ax.axvspan(hp.t_intro, hp.t_intro + hp.ramp_len, alpha=0.1, color="red")
@@ -557,6 +591,46 @@ def aggregate_and_plot(hp: HyperParams, results: List[Dict], exp_dir: Path) -> N
     ax.set_title("D) Mixing Estimation Error")
     ax.set_xlabel("Round")
     ax.set_ylabel("TV Distance")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    # Panel E: Adaptive weight evolution
+    ax = axes[2, 0]
+    for strategy in strategies:
+        data = agg_df[agg_df["strategy"] == strategy]
+        ax.plot(data["round"], data["w_value_mean"], linewidth=2, label=f"{strategy}")
+        ax.fill_between(data["round"], 
+                       data["w_value_mean"] - data["w_value_std"], 
+                       data["w_value_mean"] + data["w_value_std"], 
+                       alpha=0.2)
+    
+    ax.axvline(hp.t_intro, color="red", linestyle="--", alpha=0.7)
+    ax.axvspan(hp.t_intro, hp.t_intro + hp.ramp_len, alpha=0.1, color="red")
+    ax.axhline(hp.w_baseline, color="gray", linestyle=":", linewidth=1, label="w_baseline")
+    
+    ax.set_title("E) Adaptive Weight Evolution")
+    ax.set_xlabel("Round")
+    ax.set_ylabel("w (memory weight)")
+    ax.set_ylim(0, 1.05)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    # Panel F: Sign-consistency entropy (for adaptive strategies)
+    ax = axes[2, 1]
+    for strategy in strategies:
+        if strategy != "baseline":  # Only adaptive strategies have entropy
+            data = agg_df[agg_df["strategy"] == strategy]
+            valid_entropy = ~np.isnan(data["entropy_mean"])
+            if valid_entropy.any():
+                ax.plot(data["round"][valid_entropy], data["entropy_mean"][valid_entropy], 
+                       linewidth=2, label=f"{strategy}")
+    
+    ax.axvline(hp.t_intro, color="red", linestyle="--", alpha=0.7)
+    ax.axvspan(hp.t_intro, hp.t_intro + hp.ramp_len, alpha=0.1, color="red")
+    
+    ax.set_title("F) Sign-Consistency Entropy H_AB")
+    ax.set_xlabel("Round")
+    ax.set_ylabel("Entropy (bits)")
     ax.legend()
     ax.grid(True, alpha=0.3)
     
@@ -571,67 +645,178 @@ def aggregate_and_plot(hp: HyperParams, results: List[Dict], exp_dir: Path) -> N
 # ---------------------------------------------------------------------
 # Main experiment function
 # ---------------------------------------------------------------------
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Exp-07: Novelty Emergence with Entropy-Based Adaptive Damping",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Run with baseline (fixed w)
+  python exp07_novelty_emergence.py --strategy baseline
+  
+  # Run with EMA damping
+  python exp07_novelty_emergence.py --strategy ema --alpha-ema 0.3
+  
+  # Run with rate limiting
+  python exp07_novelty_emergence.py --strategy rate_limit --max-delta-w 0.1
+  
+  # Run with momentum
+  python exp07_novelty_emergence.py --strategy momentum --momentum 0.7
+  
+  # Run with adaptive EMA (recommended)
+  python exp07_novelty_emergence.py --strategy adaptive_ema --alpha-min 0.2 --alpha-max 0.5
+  
+  # Compare multiple strategies
+  python exp07_novelty_emergence.py --strategy baseline ema adaptive_ema --n-seeds 10
+
+Strategies:
+  baseline      : Fixed w_baseline weight (no adaptation)
+  ema           : Exponential Moving Average damping
+  rate_limit    : Hard clipping of w change rate
+  momentum      : Momentum-based smooth transitions
+  adaptive_ema  : EMA with entropy-based adaptive alpha (best for novelty detection)
+        """
+    )
+    
+    # Strategy selection
+    parser.add_argument(
+        "--strategy",
+        nargs="+",
+        default=["baseline", "adaptive_ema"],
+        choices=["baseline", "ema", "rate_limit", "momentum", "adaptive_ema"],
+        help="Adaptive strategies to compare (default: baseline + adaptive_ema)"
+    )
+    
+    # Model parameters
+    parser.add_argument("--K-old", type=int, default=3, help="Initial archetypes (default: 3)")
+    parser.add_argument("--K-new", type=int, default=3, help="New archetypes (default: 3)")
+    parser.add_argument("--N", type=int, default=400, help="Pattern dimension (default: 400)")
+    parser.add_argument("--L", type=int, default=3, help="Number of clients (default: 3)")
+    parser.add_argument("--n-batch", type=int, default=24, help="Total rounds (default: 24)")
+    parser.add_argument("--r-ex", type=float, default=0.8, help="Signal-to-noise ratio (default: 0.8)")
+    
+    # Novelty parameters
+    parser.add_argument("--t-intro", type=int, default=12, help="Introduction round (default: 12)")
+    parser.add_argument("--ramp-len", type=int, default=4, help="Ramp length (default: 4)")
+    parser.add_argument("--alpha-max", type=float, default=0.5, help="Max allocation to new (default: 0.5)")
+    
+    # Baseline parameter
+    parser.add_argument("--w-baseline", type=float, default=0.8, help="Baseline weight (default: 0.8)")
+    
+    # EMA damping parameters
+    parser.add_argument("--alpha-ema", type=float, default=0.3, help="EMA alpha (default: 0.3)")
+    
+    # Rate limit parameters
+    parser.add_argument("--max-delta-w", type=float, default=0.15, help="Max w change per round (default: 0.15)")
+    
+    # Momentum parameters
+    parser.add_argument("--momentum", type=float, default=0.7, help="Momentum coefficient (default: 0.7)")
+    
+    # Adaptive EMA parameters
+    parser.add_argument("--alpha-min", type=float, default=0.1, help="Adaptive EMA min alpha (default: 0.1)")
+    parser.add_argument("--alpha-max-adapt", type=float, default=0.5, help="Adaptive EMA max alpha (default: 0.5)")
+    
+    # Experiment settings
+    parser.add_argument("--n-seeds", type=int, default=6, help="Number of seeds (default: 6)")
+    parser.add_argument("--seed-base", type=int, default=200001, help="Base seed (default: 200001)")
+    parser.add_argument("--no-progress", action="store_true", help="Disable progress bars")
+    
+    # Output settings
+    parser.add_argument("--out-dir", type=Path, default=None, help="Output directory (default: auto)")
+    
+    return parser.parse_args()
+
+
 def main():
     """Main experiment execution."""
+    args = parse_args()
+    
+    # Build hyperparameters from CLI args
     hp = HyperParams(
         # Model parameters
-        L=3,
-        K_old=3,
-        K_new=3,
-        N=400,
-        n_batch=24,
+        L=args.L,
+        K_old=args.K_old,
+        K_new=args.K_new,
+        N=args.N,
+        n_batch=args.n_batch,
         M_total=2400,
-        r_ex=0.8,
+        r_ex=args.r_ex,
         
         # Novelty parameters
-        t_intro=12,
-        ramp_len=4,
-        alpha_max=0.5,
+        t_intro=args.t_intro,
+        ramp_len=args.ramp_len,
+        alpha_max=args.alpha_max,
         new_visibility_frac=1.0,
         
         # Learning parameters
-        w_baseline=0.8,
-        ema_alpha=0.3,
+        w_baseline=args.w_baseline,
+        damping_mode=",".join(args.strategy),  # Store all strategies
+        alpha_ema=args.alpha_ema,
+        max_delta_w=args.max_delta_w,
+        momentum=args.momentum,
+        alpha_min=args.alpha_min,
+        alpha_max_adapt=args.alpha_max_adapt,
         
         # Experiment parameters
-        n_seeds=6,
-        progress_seeds=True,
-        progress_rounds=True,
+        n_seeds=args.n_seeds,
+        seed_base=args.seed_base,
+        progress_seeds=not args.no_progress,
+        progress_rounds=not args.no_progress,
     )
     
     # Setup experiment directory
-    base_dir = ROOT / "stress_tests" / "exp07_novelty_emergence"
-    tag = (
-        f"Kold{hp.K_old}_Knew{hp.K_new}_N{hp.N}_L{hp.L}_T{hp.n_batch}_"
-        f"intro{hp.t_intro}_ramp{hp.ramp_len}_alpha{hp.alpha_max}"
-    )
-    exp_dir = base_dir / tag
+    if args.out_dir is not None:
+        exp_dir = args.out_dir
+    else:
+        base_dir = ROOT / "out_07"
+        tag = (
+            f"Kold{hp.K_old}_Knew{hp.K_new}_N{hp.N}_L{hp.L}_T{hp.n_batch}_"
+            f"intro{hp.t_intro}_ramp{hp.ramp_len}_alpha{hp.alpha_max}_"
+            f"{'_'.join(args.strategy)}"
+        )
+        exp_dir = base_dir / tag
+    
     exp_dir.mkdir(parents=True, exist_ok=True)
     
-    print(f"[SETUP] Experiment directory: {exp_dir}")
+    print("=" * 80)
+    print(f"[EXPERIMENT 07] Novelty Emergence - Entropy-Based Adaptive Damping")
+    print("=" * 80)
+    print(f"Directory    : {exp_dir}")
+    print(f"Strategies   : {', '.join(args.strategy)}")
+    print(f"K_old={hp.K_old}, K_new={hp.K_new}, N={hp.N}, L={hp.L}")
+    print(f"Rounds={hp.n_batch}, t_intro={hp.t_intro}, ramp={hp.ramp_len}")
+    print(f"Seeds={hp.n_seeds}, r_ex={hp.r_ex}")
+    print("-" * 80)
     
     # Save hyperparameters
     with open(exp_dir / "hyperparams.json", "w") as f:
         json.dump(asdict(hp), f, indent=2)
     
     # Run experiments
-    strategies = ["baseline", "adaptive"]
     results = []
     
     with open(exp_dir / "log.jsonl", "w") as flog:
         seed_iter = range(hp.n_seeds)
         if hp.progress_seeds:
-            seed_iter = tqdm(seed_iter, desc="Seeds")
+            seed_iter = tqdm(seed_iter, desc="Seeds", position=0)
         
         for s in seed_iter:
             seed = hp.seed_base + s
             
-            for strategy in strategies:
+            for strategy in args.strategy:
                 result = run_one_seed_strategy(hp, seed, strategy, exp_dir)  # type: ignore
                 results.append(result)
                 
                 # Log result
-                flog.write(json.dumps(result) + "\n")
+                log_entry = {
+                    "seed": seed,
+                    "strategy": strategy,
+                    "final_keff": result["keff"][-1],
+                    "final_m_old": result["m_old"][-1],
+                    "final_m_new": result["m_new"][-1],
+                }
+                flog.write(json.dumps(log_entry) + "\n")
                 flog.flush()
     
     print(f"[RESULTS] Completed {len(results)} simulations")
@@ -659,15 +844,21 @@ def main():
     summary_df.to_csv(exp_dir / "summary.csv", index=False)
     
     # Print summary
-    print("\n[SUMMARY]")
-    for strategy in strategies:
+    print("\n" + "=" * 80)
+    print("[SUMMARY BY STRATEGY]")
+    print("=" * 80)
+    
+    for strategy in args.strategy:
         strat_data = summary_df[summary_df["strategy"] == strategy]
-        print(f"{strategy.capitalize()} Strategy:")
-        print(f"  Detection Rate: {strat_data['detection_success'].mean():.2f}")
-        print(f"  Final K_eff: {strat_data['final_keff'].mean():.2f} ± {strat_data['final_keff'].std():.2f}")
-        print(f"  Final m_old: {strat_data['final_m_old'].mean():.3f} ± {strat_data['final_m_old'].std():.3f}")
-        print(f"  Final m_new: {strat_data['final_m_new'].mean():.3f} ± {strat_data['final_m_new'].std():.3f}")
-        print()
+        print(f"\n{strategy.upper()}:")
+        print(f"  Detection Rate    : {strat_data['detection_success'].mean():.2%}")
+        print(f"  Final K_eff       : {strat_data['final_keff'].mean():.2f} ± {strat_data['final_keff'].std():.2f}")
+        print(f"  Final m_old       : {strat_data['final_m_old'].mean():.3f} ± {strat_data['final_m_old'].std():.3f}")
+        print(f"  Final m_new       : {strat_data['final_m_new'].mean():.3f} ± {strat_data['final_m_new'].std():.3f}")
+    
+    print("\n" + "=" * 80)
+    print(f"[DONE] Results saved to: {exp_dir}")
+    print("=" * 80)
 
 if __name__ == "__main__":
     main()

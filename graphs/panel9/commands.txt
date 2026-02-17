@@ -1,0 +1,3 @@
+python graphs/panel9/separable_noise_demo.py --preset full --replicates 10 --output graphs/panel9/output/test_panel9.npz --log graphs/panel9/output/test_panel9.json
+
+python graphs/panel9/plot_panel9.py --input graphs/panel9/output/test_panel9.npz --output graphs/panel9/output/test_panel9.pdf

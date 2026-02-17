@@ -1,0 +1,31 @@
+BBP PANEL 2 EXPERIMENT
+======================================================================
+
+Experiment: bbp_N400_K3_r90_M100-3200_a95-40-5_20251016_141824
+Date: 2025-10-16 14:18:27
+
+PARAMETERS:
+  N               = 400
+  K               = 3
+  r_ex            = 0.9
+  M_values        = [ 100  200  400  800 1600 3200]
+  alpha           = [0.95 0.4  0.05]
+  sharp_alpha     = 0.7
+  seed            = 2025
+  _description    = Example: 4 archetypes with strong sharpening and moderate exposure
+
+======================================================================
+
+OUTPUTS:
+  - Data:   bbp_data.npz
+  - Plot:   panel2_visualization.pdf / .png
+  - Config: config.json
+
+======================================================================
+
+QUICK VALIDATION (M=100):
+  Empirical overlap (pre):  [0.99834377 0.99653924 0.97040386]
+  Empirical overlap (post): [0.99855946 0.99653736 0.97031703]
+  Theory gamma:             [0.99655214 0.99184026 0.93735689]
+
+======================================================================

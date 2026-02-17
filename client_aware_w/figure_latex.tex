@@ -1,0 +1,82 @@
+%% ============================================================
+%% Figure: Client-Aware Adaptive Weight
+%% ============================================================
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\textwidth]{client_aware_w/output/panel_client_aware_w.pdf}
+\caption{%
+\textbf{Per-client adaptive weight dynamics in federated unsupervised learning with adversarial noise.}
+%
+\textbf{(A)}~Temporal evolution of the adaptive weight $w_c(t)$ (Eq.~\ref{eq:convex_comb}) for good clients (blue, $r=0.9$) and one attacker client receiving pure noise (vermillion dashed, $r=0$).
+%
+The weight update rule is based on normalized sign-agreement between the client's local Hebbian correlator $J^{(t)}_c$ and the server's reconstruction operator from the previous round (Section~\ref{subsec:plasticity_w}).
+%
+Good clients maintain stable non-zero weights ($w_{\mathrm{good}} \approx 0.4$--$0.6$), reflecting high-quality local data.
+%
+The attacker's weight rapidly converges to zero ($w_{\mathrm{att}} \to 0$ within $\sim$10 rounds), effectively down-weighting noisy contributions in the server aggregation.
+%
+Shaded regions represent standard error over $S=20$ independent seeds.
+%
+\textbf{(B)}~Server-side retrieval quality: per-archetype magnetization $m_k(t)$ (colored lines, $k=1,2,3$) and mean retrieval $\langle m \rangle$ (black line).
+%
+The system maintains high reconstruction fidelity ($\langle m \rangle \gtrsim 0.7$) despite the presence of one attacker, demonstrating robustness of the adaptive weighting scheme.
+%
+Parameters: $N=1000$ neurons, $K=3$ archetypes, $L=5$ clients (4 good + 1 attacker), $T=10$ rounds, $M=800$ examples/client/round, $\alpha_{\mathrm{EMA}}=0.5$.
+}
+\label{fig:client_aware_adaptive_weight}
+\end{figure}
+
+
+%% ============================================================
+%% Main text (suggested placement after Section on plasticity/stability)
+%% ============================================================
+
+To validate the per-client adaptive weight mechanism described in Section~\ref{subsec:plasticity_w}, 
+we conducted a federated unsupervised learning experiment in which one client (the \emph{attacker}) 
+receives pure noise ($r=0$), while the remaining clients observe data drawn from the same latent 
+archetypes at high quality ($r=0.9$).
+%
+Figure~\ref{fig:client_aware_adaptive_weight}A shows the temporal evolution of the adaptive 
+weight $w_c(t)$ (Eq.~\ref{eq:convex_comb}) for both populations.
+%
+The weight update rule, based on normalized sign-agreement between the client's local 
+Hebbian matrix and the server's reconstruction operator, successfully discriminates signal from noise: 
+good clients stabilize at $w_{\mathrm{good}} \approx 0.4$--$0.6$, balancing local evidence with 
+server guidance, while the attacker's weight collapses to near-zero within $\sim$10 rounds.
+
+Importantly, this down-weighting of noisy clients preserves server-side reconstruction quality 
+(Figure~\ref{fig:client_aware_adaptive_weight}B).
+%
+Despite the presence of one attacker among five clients (\SI{20}{\percent} contamination), 
+the mean retrieval $\langle m \rangle$ remains above $0.7$ throughout training, indicating that 
+the server's TAM dynamics (Section~\ref{sec:model}) successfully disentangle the $K=3$ latent 
+archetypes from the aggregated—but adaptively weighted—Hebbian correlators.
+%
+Per-archetype magnetizations $m_k(t)$ (colored curves) exhibit stable convergence, with minor 
+fluctuations attributable to stochastic sampling and the non-convex TAM energy landscape.
+
+This experiment demonstrates that \emph{local} sign-agreement entropy, computed independently 
+by each client without access to ground-truth labels, provides a reliable signal for data quality, 
+enabling robust federated learning even under adversarial noise injection.
+%
+The approach generalizes naturally to heterogeneous client populations with varying $r_c$ 
+(partial observations, label noise, distribution shift), offering a principled mechanism for 
+\emph{plasticity-stability balance} in decentralized unsupervised settings.
+
+
+%% ============================================================
+%% Alternative compact version (if space is limited)
+%% ============================================================
+
+% To validate the adaptive weight mechanism (Section~\ref{subsec:plasticity_w}), we simulated 
+% a federated scenario with $L=5$ clients, where one client receives pure noise ($r=0$) 
+% and four observe high-quality data ($r=0.9$).
+% %
+% Figure~\ref{fig:client_aware_adaptive_weight}A shows that the sign-agreement-based weight 
+% $w_c(t)$ successfully discriminates signal from noise: good clients stabilize at 
+% $w \approx 0.4$--$0.6$, while the attacker's weight decays to zero within $\sim$10 rounds.
+% %
+% Despite \SI{20}{\percent} contamination, server reconstruction quality remains high 
+% ($\langle m \rangle \gtrsim 0.7$, panel B), demonstrating robustness to adversarial noise.
+

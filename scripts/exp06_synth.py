@@ -90,16 +90,16 @@ def build_argparser() -> argparse.ArgumentParser:
     )
 
     # Output
-    p.add_argument("--outdir", type=str, default="out_06/synth", help="Cartella radice per i risultati")
+    p.add_argument("--outdir", type=str, default="out_06/synth_temp", help="Cartella radice per i risultati")
 
     # Problem scale / dataset federato
     p.add_argument("--L", type=int, default=3, help="Numero client/layer")
     p.add_argument("--K", type=int, default=3, help="Numero archetipi")
     p.add_argument("--N", type=int, default=300, help="Dimensione dei pattern")
-    p.add_argument("--rounds", type=int, default=12, help="Numero di round (T)")
+    p.add_argument("--rounds", type=int, default=24, help="Numero di round (T)")
     p.add_argument("--M-total", type=int, default=1200, help="Numero totale di esempi")
-    p.add_argument("--r-ex", type=float, default=0.8, help="Correlazione media campione/archetipo")
-    p.add_argument("--w", type=float, default=0.5, help="Peso 'unsup' nel blend con memoria (usato se --w-policy=fixed)")
+    p.add_argument("--r-ex", type=float, default=0.6, help="Correlazione media campione/archetipo")
+    p.add_argument("--w", type=float, default=0.0, help="Peso 'unsup' nel blend con memoria (usato se --w-policy=fixed)")
 
     # Propagazione / Spettro / TAM (override possibili)
     p.add_argument("--prop-iters", type=int, default=200, help="Iterazioni propagate_J")
@@ -124,7 +124,7 @@ def build_argparser() -> argparse.ArgumentParser:
                    choices=("cyclic", "piecewise_dirichlet", "random_walk"),
                    help="Tipo di mixing-schedule")
     # cyclic
-    p.add_argument("--period", type=int, default=12, help="[cyclic] Periodo in round")
+    p.add_argument("--period", type=int, default=24, help="[cyclic] Periodo in round")
     p.add_argument("--gamma", type=float, default=2.0, help="[cyclic] Ampiezza logits")
     p.add_argument("--temp", type=float, default=1.2, help="[cyclic] Temperatura softmax")
     p.add_argument("--center-mix", type=float, default=0.30, help="[cyclic] Blend con uniforme")
@@ -144,15 +144,15 @@ def build_argparser() -> argparse.ArgumentParser:
     # Plotting
     p.add_argument("--simplex-style", type=str, default="legacy", choices=("modern", "legacy"),
                    help="Stile embedding simplesso per le figure (modern|legacy)")
-    p.add_argument("--panel-mode", type=str, default="exposure",
-                   choices=("phase", "drift", "exposure"),
-                   help="Contenuto quadrante in basso a destra del pannello 4×: phase (diagram), drift (TV drift/mismatch), exposure (cumulative exposure)")
+    p.add_argument("--panel-mode", type=str, default="adaptive_w",
+                   choices=("phase", "drift", "exposure", "adaptive_w"),
+                   help="Contenuto quadrante in basso a destra del pannello 4×: phase (diagram), drift (TV drift/mismatch), exposure (cumulative exposure), adaptive_w (w_t trajectory)")
 
     # --- Adaptive w control (common) ---
-    p.add_argument("--w-policy", type=str, default="fixed",
-                   choices=("fixed", "threshold", "sigmoid", "pctrl"),
+    p.add_argument("--w-policy", type=str, default="entropy_damped",
+                   choices=("fixed", "threshold", "sigmoid", "pctrl", "entropy", "entropy_damped"),
                    help="Policy di aggiornamento w round-wise")
-    p.add_argument("--w-init", type=float, default=0.5, help="Valore iniziale w al round 0")
+    p.add_argument("--w-init", type=float, default=0.0, help="Valore iniziale w al round 0")
     p.add_argument("--w-min", type=float, default=0.10, help="Limite inferiore per w")
     p.add_argument("--w-max", type=float, default=0.90, help="Limite superiore per w")
     p.add_argument("--alpha-w", type=float, default=0.6, help="Smoothing sul controllo di w")
@@ -177,6 +177,23 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--kd", type=float, default=0.0, help="Guadagno derivativo")
     p.add_argument("--gate-drift-theta", type=float, default=0.1,
                    help="Se impostato: se S_t < theta, non aumentare w (gating)")
+
+    # Policy D: entropy_damped (temporal smoothing for entropy-based w)
+    p.add_argument("--damping-mode", type=str, default="ema",
+                   choices=("ema", "rate_limit", "momentum", "adaptive_ema"),
+                   help="[entropy_damped] Damping strategy: ema (exponential moving average), rate_limit (max Δw), momentum (smooth velocity), adaptive_ema (uncertainty-modulated)")
+    p.add_argument("--alpha-ema", type=float, default=0.3,
+                   help="[entropy_damped] EMA smoothing factor (higher = faster adaptation)")
+    p.add_argument("--max-delta-w", type=float, default=0.15,
+                   help="[entropy_damped] Maximum allowed change in w per round (for rate_limit mode)")
+    p.add_argument("--momentum-coeff", type=float, default=0.7,
+                   help="[entropy_damped] Momentum coefficient (for momentum mode)")
+    p.add_argument("--adaptive-alpha", action="store_true", default=True,
+                   help="[entropy_damped] Enable adaptive alpha modulation based on uncertainty")
+    p.add_argument("--alpha-min", type=float, default=0.1,
+                   help="[entropy_damped] Minimum alpha for adaptive_ema mode")
+    p.add_argument("--alpha-max", type=float, default=0.5,
+                   help="[entropy_damped] Maximum alpha for adaptive_ema mode")
 
     return p
 
@@ -305,6 +322,15 @@ def _create_panel4x_and_scatter(run_dir: Path, w: float, simplex_style: str, pan
     else:
         phase_metric = [float(np.mean(M_plot))]
 
+    # Load w_series if available (for adaptive_w mode)
+    w_series = None
+    w_series_path = results_dir / "w_series.npy"
+    if w_series_path.exists():
+        try:
+            w_series = np.load(w_series_path)
+        except Exception:
+            w_series = None
+
     # 1) Pannello 4×
     fig, _info = panel4x(
         pi_true_seq=pi_true_seq,
@@ -318,6 +344,7 @@ def _create_panel4x_and_scatter(run_dir: Path, w: float, simplex_style: str, pan
         labels=("μ0", "μ1", "μ2"),
         simplex_style=simplex_style,
         bottom_right_mode=str(panel_mode),
+        w_series=w_series,  # Pass w_series for adaptive_w mode
         suptitle=f"Seed panel — w={w:.2f}",
     )
     _save_fig(fig, figs_dir / "panel4x.png")
@@ -486,6 +513,14 @@ def main() -> None:
             lag_target=float(args.lag_target), lag_window=int(args.lag_window),
             kp=float(args.kp), ki=float(args.ki), kd=float(args.kd),
             gate_drift_theta=None if args.gate_drift_theta is None else float(args.gate_drift_theta),
+            # entropy damping parameters
+            damping_mode=str(args.damping_mode),
+            alpha_ema=float(args.alpha_ema),
+            max_delta_w=float(args.max_delta_w),
+            momentum=float(args.momentum_coeff),
+            adaptive_alpha=bool(args.adaptive_alpha),
+            alpha_min=float(args.alpha_min),
+            alpha_max=float(args.alpha_max),
         )
         write_json(run_dir / "summary_cli.json", {
             "seed": int(s),

@@ -1,0 +1,3 @@
+python graphs/panel11/byzantine_persistence_demo.py --replicates 10 --output graphs/panel11/output/test_panel11.npz --log graphs/panel11/output/test_panel11.json --seed 2024
+
+python graphs/panel11/plot_panel11.py --input graphs/panel11/output/test_panel11.npz --output graphs/panel11/output/test_panel11.pdf

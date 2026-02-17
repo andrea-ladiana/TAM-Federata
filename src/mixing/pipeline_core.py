@@ -5,7 +5,7 @@ Exp-06 (single-only) — pipeline core (dataset non strutturato).
 Questo modulo implementa un motore round-by-round che:
   1) genera (o riceve) un dataset sintetico binario in {±1}, con mixing schedule pis (T,K)
   2) per ogni round t:
-        - stima J_unsup(t) (single) e blend con memoria ebraica (J_hebb(xi_prev)) pesata da w
+        - stima J_unsup(t) (single) e blend con memoria  (J_hebb(xi_prev)) pesata da w
         - propaga J -> J_KS (pseudo-inversa iterativa)
         - taglio spettrale + disentangling TAM -> xi_r(t)
         - allinea i candidati a xi_true (greedy senza SciPy) e aggiorna xi_ref (per il blend successivo)
@@ -38,7 +38,7 @@ import numpy as np
 from src.unsup.config import HyperParams  # :contentReference[oaicite:1]{index=1}
 from src.unsup.data import new_round_single, compute_round_coverage, count_exposures  # :contentReference[oaicite:2]{index=2}
 from src.unsup.estimators import build_unsup_J_single, blend_with_memory  # :contentReference[oaicite:3]{index=3}
-from src.unsup.functions import propagate_J, estimate_K_eff_from_J, gen_patterns  # :contentReference[oaicite:4]{index=4}
+from src.unsup.functions import propagate_J, estimate_K_eff_from_J, gen_patterns, Hebb_J  # :contentReference[oaicite:4]{index=4}
 from src.unsup.dynamics import dis_check  # :contentReference[oaicite:5]{index=5}
 from src.unsup.spectrum import estimate_keff as _estimate_keff_spectrum
 from src.unsup.hopfield_eval import run_or_load_hopfield_eval  # :contentReference[oaicite:6]{index=6}
@@ -49,6 +49,8 @@ from .control import (
     update_w_pctrl,
 )
 from .metrics import lag_and_amplitude, simplex_embed_2d
+from src.mixing.adaptive_w import compute_entropy_based_w
+from src.mixing.adaptive_w_damped import compute_entropy_based_w_damped
 
 
 # ----------------------------
@@ -190,7 +192,7 @@ def run_seed_synth(
     xi_true: Optional[np.ndarray] = None,       # (K,N); se None => gen_patterns
     eval_hopfield_every: int = 1,               # 1=ogni round, 0=disabilitato, n>1 = ogni n round
     # --- controllo w ---
-    w_policy: str = "pctrl",                    # {fixed, threshold, sigmoid, pctrl}
+    w_policy: str = "pctrl",                    # {fixed, threshold, sigmoid, pctrl, entropy, entropy_damped}
     w_init: Optional[float] = None,             # default: hp.w se None
     w_min: float = 0.05,
     w_max: float = 0.95,
@@ -212,6 +214,14 @@ def run_seed_synth(
     ki: float = 0.0,
     kd: float = 0.0,
     gate_drift_theta: Optional[float] = None,
+    # --- Entropy damping parameters (for w_policy="entropy_damped") ---
+    damping_mode: str = "adaptive_ema",         # {ema, rate_limit, momentum, adaptive_ema}
+    alpha_ema: float = 0.3,                     # EMA smoothing factor
+    max_delta_w: float = 0.15,                  # Max change per round (rate_limit mode)
+    momentum: float = 0.7,                      # Momentum coefficient
+    adaptive_alpha: bool = True,                # Enable adaptive alpha modulation
+    alpha_min: float = 0.1,                     # Min alpha for adaptive_ema
+    alpha_max: float = 0.5,                     # Max alpha for adaptive_ema
 ) -> Dict[str, Any]:
     """
     Esegue Exp-06 (single-only) su dataset sintetico.
@@ -284,6 +294,64 @@ def run_seed_synth(
 
         # stima unsup + blend single
         J_unsup, M_eff = build_unsup_J_single(E_t, K=hp.K)  # :contentReference[oaicite:11]{index=11}
+        
+        # === ENTROPY-BASED ADAPTIVE W COMPUTATION ===
+        # If policy is "entropy" or "entropy_damped", compute w_t BEFORE blending using sign-consistency
+        # between A_t (Hebbian of previous reconstructed archetypes) and B_t (current data)
+        entropy_metrics = None
+        pol = (w_policy or "pctrl").lower().strip()
+        
+        if pol in ("entropy", "entropy_damped") and xi_ref_prev is not None and t > 0:
+            try:
+                # A_t: Hebbian matrix of reconstructed archetypes from previous round
+                A_t = Hebb_J(xi_ref_prev)
+                # B_t: current round data matrix (J_unsup)
+                B_t = J_unsup
+                
+                if pol == "entropy":
+                    # Original undamped entropy method
+                    entropy_result = compute_entropy_based_w(A_t=A_t, B_t=B_t, r_ex=hp.r_ex)
+                    w_curr = float(entropy_result['w'])
+                    entropy_metrics = {
+                        'H_AB': float(entropy_result['H_AB']),
+                        'H_min': float(entropy_result['H_min']),
+                        'p': float(entropy_result['p']),
+                    }
+                else:  # entropy_damped
+                    # Damped version with temporal smoothing
+                    entropy_result = compute_entropy_based_w_damped(
+                        A_t=A_t, B_t=B_t, r_ex=hp.r_ex,
+                        w_prev=w_curr,  # Use previous w for smoothing
+                        damping_mode=damping_mode,
+                        alpha_ema=alpha_ema,
+                        max_delta_w=max_delta_w,
+                        momentum=momentum,
+                        adaptive_alpha=adaptive_alpha,
+                        alpha_min=alpha_min,
+                        alpha_max=alpha_max,
+                    )
+                    w_curr = float(entropy_result['w'])
+                    entropy_metrics = {
+                        'w_raw': float(entropy_result['w_raw']),
+                        'H_AB': float(entropy_result['H_AB']),
+                        'H_min': float(entropy_result['H_min']),
+                        'p': float(entropy_result['p']),
+                        'damping_info': entropy_result['damping_info'],
+                    }
+            except Exception as e:
+                # Fallback: keep current w if computation fails
+                entropy_metrics = {'error': str(e)}
+                
+        elif pol in ("entropy", "entropy_damped") and (xi_ref_prev is None or t == 0):
+            # First round: no previous archetypes, use w=1.0 (all data-driven)
+            w_curr = 1.0
+            entropy_metrics = {
+                'H_AB': float('nan'),
+                'H_min': float('nan'),
+                'p': float('nan'),
+                'note': 'first_round_w1',
+            }
+        
         J_rec = blend_with_memory(J_unsup, xi_prev=xi_ref_prev, w=float(np.clip(w_curr, 0.0, 1.0)))  # :contentReference[oaicite:12]{index=12}
         np.save(rdir / "J_unsup.npy", J_unsup.astype(np.float32))
         np.save(rdir / "J_rec.npy", J_rec.astype(np.float32))
@@ -555,6 +623,11 @@ def run_seed_synth(
         try:
             if pol == "fixed":
                 w_next = float(hp.w if w_init is None else w_init)
+            elif pol in ("entropy", "entropy_damped"):
+                # For entropy policies, w was already computed BEFORE blending (see above)
+                # and stored in w_curr. Use it for next round as well.
+                # Note: w_curr already contains the entropy-computed value for this round.
+                w_next = float(w_curr)
             elif pol == "threshold":
                 w_next = update_w_threshold(
                     w_prev=float(w_curr), D_t=D_t, M_t=M_t, S_t=S_t,
@@ -592,6 +665,9 @@ def run_seed_synth(
         metrics_t["S_t"] = float(S_t)
         if lag_abs_rad is not None:
             metrics_t["lag_abs_rad"] = float(lag_abs_rad)
+        # Add entropy metrics if computed
+        if entropy_metrics is not None:
+            metrics_t["entropy"] = entropy_metrics
         metrics_t["controller"] = {
             "policy": pol,
             "params": {

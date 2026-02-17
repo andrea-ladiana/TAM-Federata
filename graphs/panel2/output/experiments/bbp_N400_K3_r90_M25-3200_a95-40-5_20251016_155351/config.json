@@ -1,0 +1,23 @@
+{
+  "N": 400,
+  "K": 3,
+  "r_ex": 0.9,
+  "M_values": [
+    25,
+    50,
+    100,
+    200,
+    400,
+    800,
+    1600,
+    3200
+  ],
+  "alpha": [
+    0.95,
+    0.4,
+    0.05
+  ],
+  "sharp_alpha": 0.7,
+  "seed": 2025,
+  "_description": "Example: 4 archetypes with strong sharpening and moderate exposure"
+}

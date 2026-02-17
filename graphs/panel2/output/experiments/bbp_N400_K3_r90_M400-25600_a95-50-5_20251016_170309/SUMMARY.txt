@@ -1,0 +1,43 @@
+BBP PANEL 2 EXPERIMENT
+======================================================================
+
+Experiment: bbp_N400_K3_r90_M400-25600_a95-50-5_20251016_170309
+Date: 2025-10-16 17:05:01
+
+PARAMETERS:
+  N               = 400
+  K               = 3
+  r_ex            = 0.9
+  M_values        = [  400  1600  6400 25600]
+  alpha           = [0.95 0.5  0.05]
+  sharp_alpha     = 0.7
+  n_trials        = 200
+  seed            = 2025
+  _description    = Example: 4 archetypes with strong sharpening, moderate exposure, 50 trials for statistics
+
+======================================================================
+
+OUTPUTS:
+  - Data:   bbp_data.npz
+  - Plot:   panel2_visualization.pdf / .png
+  - Config: config.json
+
+======================================================================
+
+QUICK VALIDATION (M=400):
+  n_trials: 200
+  Empirical overlap (pre):  [0.99951638 0.99897346 0.98618905] ± [7.18487979e-05 1.08893418e-04 2.51298709e-03]
+  Empirical overlap (post): [0.9995852  0.9989946  0.98616522] ± [5.95105410e-05 1.03016553e-04 2.52241316e-03]
+  Theory gamma:             [0.99907407 0.99824074 0.98240741]
+
+======================================================================
+
+DETAILED PANEL SUMMARY
+======================================================================
+
+- Panel A: For exposures M=400-25600, 3/3 to 3/3 eigenvalues remain above the MP edge; the weakest spike stays 9.43 and the strongest 204.19 units above lambda_plus.
+- Panel B: Empirical lambda_out track the BBP prediction with R^2 between 0.898 and 0.994; the mean absolute error is 1.04 (3.53% of theory).
+- Panel C: Eigenvector overlaps stay within 0.0052 of gamma(kappa,q); the median gap across exposures is 0.0003.
+- Panel D: Sharpening inflates the RMS eigenvalue error from 0.098 to 0.406 (approx 4.7x), indicating substantial compression of spike magnitudes.
+
+======================================================================

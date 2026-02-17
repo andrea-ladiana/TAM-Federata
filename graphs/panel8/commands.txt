@@ -1,0 +1,3 @@
+python graphs/panel8/heavy_tail_demo.py --preset full --replicates 10 --output graphs/panel8/output/test_panel8.npz --log graphs/panel8/output/test_panel8.json
+
+python graphs/panel8/plot_panel8.py --input graphs/panel8/output/test_panel8.npz --output graphs/panel8/output/test_panel8.pdf

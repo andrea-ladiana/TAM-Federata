@@ -1,0 +1,22 @@
+DAMPED EMA
+python scripts/exp06_synth.py --w-policy=entropy_damped --damping-mode=ema --alpha-ema=0.3 --panel-mode=adaptive_w --outdir=out_06/damped_ema --eval-hopfield-every=1
+
+
+RATE LIMIT:
+python scripts/exp06_synth.py --w-policy=entropy_damped --damping-mode=rate_limit --max-delta-w=0.15 --outdir=out_06/damped_rate_limit --eval-hopfield-every=1
+
+easy:
+python scripts/exp06_synth.py --w-policy=entropy_damped --damping-mode=rate_limit --max-delta-w=0.15 --panel-mode=adaptive_w --L=3 --K=3 --N=300 --rounds=24 --M-total=2400 --r-ex=0.8 --schedule=cyclic --period=12 --gamma=2.0 --temp=1.2 --center-mix=0.10 --outdir=out_06/damped_rate_limit --eval-hopfield-every=1
+
+
+MOMENTUM:
+python scripts/exp06_synth.py --w-policy=entropy_damped --damping-mode=momentum --momentum-coeff=0.7 --outdir=out_06/damped_momentum --eval-hopfield-every=1
+
+easy:
+python scripts/exp06_synth.py --w-policy=entropy_damped --damping-mode=momentum --momentum-coeff=0.7 --panel-mode=adaptive_w --L=3 --K=3 --N=300 --rounds=24 --M-total=2400 --r-ex=0.8 --schedule=cyclic --period=12 --gamma=2.0 --temp=1.2 --center-mix=0.10 --outdir=out_06/damped_momentum --eval-hopfield-every=1
+
+ADAPTIVE EMA:
+python scripts/exp06_synth.py --w-policy=entropy_damped --damping-mode=adaptive_ema --alpha-min=0.1 --alpha-max=0.5 --adaptive-alpha --outdir=out_06/damped_adaptive_ema
+
+easy:
+python scripts/exp06_synth.py --w-policy=entropy_damped --damping-mode=adaptive_ema --alpha-min=0.1 --alpha-max=0.5 --adaptive-alpha --panel-mode=adaptive_w --L=3 --K=3 --N=300 --rounds=24 --M-total=2400 --r-ex=0.8 --schedule=cyclic --period=12 --gamma=2.0 --temp=1.2 --center-mix=0.30 --outdir=out_06/damped_adaptive_ema --eval-hopfield-every=1

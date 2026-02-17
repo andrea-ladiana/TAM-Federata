@@ -1,0 +1,730 @@
+Our results substantiate three claims. First, \emph{exposure} is the correct organizing principle for detectability: when a class gains exposure, BBP outliers split from the bulk and the leading eigenvectors align with archetypal directions, enabling reliable seeding. Second, an \emph{entropy–driven stability–plasticity controller} yields robust schedule tracking without hand tuning, preserving previously consolidated attractors while remaining responsive to drift. Third, the system \emph{integrates novelties} with low detection latency and limited interference, expanding the effective representational subspace precisely when new directions become informative.
+
+
+\subsection{The role of exposure and BBP transitions}\label{subsec:bbp}
+
+This section formalizes when and why archetypal structure becomes \emph{spectrally visible} in the server-side estimator, addressing a fundamental challenge in federated Hebbian learning. At each communication round $t$, the server constructs an unsupervised correlator, $B_t$, by aggregating heterogeneous, fragmented client-side examples. This estimator must reliably encode global patterns despite the server observing only contemporaneous samples with varying class coverage and never having direct access to the complete data distribution.
+To explain this emergence of structure, we develop a spectral theory connecting the federated sampling process to classical results in random matrix theory. We show that the expectation of $B_t$ admits a spiked–Wishart decomposition, where each spike is weighted by the round exposure, and that $B_t$ itself concentrates around this population operator at non-asymptotic rates.
+
+These findings provide a principled framework and quantitative predictions regarding detectability thresholds, eigenvalue locations, and eigenvector alignment. These facts underpin the detectability criteria used to count $K_{\mathrm{eff}}(t)$, seed candidates from the leading eigenspace, and explain why spectral sharpening improves separability. The section is structured as follows: we state the decomposition, a one-block concentration theorem and (in the sequel) a five-point detection result; technical lemmata are deferred to the appendix.
+
+\vspace{3mm}
+\noindent
+The population counterpart of the round-wise Hebbian estimator admits a canonical spiked-Wishart decomposition into isotropic noise plus a finite-rank signal aligned with the true archetypes. Specifically, with data generated as in Subsec. \ref{subsec:arch-ex}, we define the noise variance as $\sigma^2:=1-r^2$. The population counterpart of the round estimator then has the spiked–Wishart form:
+\begin{equation}\label{eq:spiked-decomp}
+\mathbb{E}[B_t]\;=\;\sigma^2 I\;+\;\frac{r^2}{N}\sum_{\mu=1}^K \alpha_\mu^{(t)}\,\xi^\mu(\xi^\mu)^\top,
+\qquad \alpha_\mu^{(t)}\ \propto\ \pi_t(\mu).
+\end{equation}
+This expected matrix takes the form of a scaled identity, $\sigma^2 I$, representing bulk randomness, augmented by a sum of rank-one projectors onto the archetypal directions ($\xi^\mu$).
+
+Each projector is weighted by $\alpha_\mu^{(t)}$, a coefficient proportional to that archetype's exposure in the current round mixture, $\pi_t(\mu)$. Here, exposure quantifies the probability that a given class $\mu$ is selected across the federation at time $t$, aggregating the heterogeneous local distributions maintained by individual clients. This structure, confirmed by conditioning on $\mu$ (which gives $\mathbb{E}[\eta\eta^\top|\mu]=r^2\xi^\mu(\xi^\mu)^\top+(1-r^2)I$) and then averaging over $\pi_t(\mu)$, identifies this exposure as the effective spike strength driving spectral separation.
+
+This decomposition immediately suggests a spectral lens: if exposure $\alpha_\mu^{(t)}$ is sufficiently strong, the corresponding rank-one signal should manifest as an eigenvalue separated from the bulk spectrum of the noise component, with its eigenvector aligned to the ground-truth archetype $\xi^\mu$. The central question is then to make this intuition precise, determining the exact threshold at which separation occurs, characterizing the finite-sample fluctuations around the asymptotic predictions, and establishing how the federated structure of data collection affects these quantities.
+
+\vspace{3mm}
+\noindent
+We collect assumptions and bounds in a single block. Throughout, $\|\cdot\|_{\mathrm{op}}$ denotes operator norm, $M_{\mathrm{round}}=L\,M_c$, and $\sigma^2$ is as above.
+
+\begin{theorem}[Concentration]\label{thm:concentration}
+\leavevmode\par\smallskip\noindent
+Let $(\chi_j)_{j=1}^N$ be independent coordinates and fix a communication round index $t$, and let $B_t$ be as defined above. Then, for every deviation level $u>0$:
+\begin{enumerate}
+\item[\textnormal{(i)}]\label{thm:concentration:subg} \textbf{(Sub-Gaussian case)} 
+If $\|\chi_j\|_{\psi_2}\le C$ for all $j$, there exists a constant $c_1>0$ (depending only on $C$) such that
+\begin{equation}\label{eq:conc-main}
+\mathbb{P}\left(\,\big\|B_t-\mathbb{E}[B_t]\big\|_{\mathrm{op}}>u\,\right)
+\;\le\; 2N\exp\left(-\,c_1\,M_{\mathrm{round}}\cdot \min\left\{\frac{u^2}{\sigma^{4}},\,\frac{u}{\sigma^{2}}\right\}\right),
+\end{equation}
+where $\sigma^2:=\max_j \mathrm{Var}(\chi_j)$.
+
+\item[\textnormal{(ii)}]\label{thm:concentration:rademacher} \textbf{(Bounded / Rademacher channel)} 
+If $\chi_j\in\{\pm1\}$ with $\mathbb{E}[\chi_j]=r$, there exists a universal constant $c_\ast>0$ such that
+\begin{equation}\label{eq:conc-rad}
+\mathbb{P}\left(\,\big\|B_t-\mathbb{E}[B_t]\big\|_{\mathrm{op}}>u\,\right)
+\;\le\; 2N\exp\left(-\,c_\ast\,M_{\mathrm{round}}\cdot \min\left\{\frac{u^2}{\sup_{\lambda\in[0,1]}\lambda(1-\lambda)},\,u\right\}\right),
+\end{equation}
+and, in particular,
+\begin{equation}
+\sup_{\lambda\in[0,1]}\lambda(1-\lambda)= \tfrac14.
+\end{equation}
+
+\item[\textnormal{(iii)}]\label{thm:concentration:finiteN} \textbf{(Finite-$N$ refined bound)} 
+In the bounded/Rademacher setting of \textnormal{(ii)}, for all $N$ and $M_c$ there exist universal constants $c_3,C>0$ such that
+\begin{equation}\label{eq:conc-finiteN}
+\mathbb{P}\left(\,\big\|B_t-\mathbb{E}[B_t]\big\|_{\mathrm{op}}>u\,\right)
+\;\le\; 2\exp\left(-\,c_3\,M_{\mathrm{round}}\cdot \min\left\{\frac{u^2}{\sup_{\lambda\in[0,1]}\lambda(1-\lambda)},\,u\right\}\;+\;C\log N\right).
+\end{equation}
+\end{enumerate}
+\end{theorem}
+
+
+
+
+
+
+\vspace{3mm}
+\noindent
+The bounds \eqref{eq:conc-main}–\eqref{eq:conc-finiteN} are non-asymptotic, scale with the effective round size $L M_c$, and stabilize the spectral edge predicted by the spiked model. In the Rademacher channel they admit explicit constants and a simple variance proxy, which we exploit empirically; full proofs and auxiliary tools (e.g., MP universality, isotropic local law) are deferred to the appendix.
+
+
+\medskip
+\noindent
+The concentration result in operator norm provides the foundational probabilistic guarantee that licenses all subsequent spectral inference. It establishes that the empirical Hebbian estimator remains within a thin operator-norm neighborhood of its population expectation with exponentially high probability, where the deviation bound scales linearly with the effective sample size of the round. In the single-round regime with fixed aspect ratio between dimension and per-client samples, this translates into exponential concentration in the ambient dimension, ensuring that the bulk edges and spike locations predicted by the population model are not washed out by finite-sample variability. The proof exploits sub-Gaussian tail bounds for the individual example coordinates and applies matrix concentration inequalities to the aggregated outer product, yielding constants that depend on the noise variance and can be further refined under bounded-variable assumptions such as Rademacher coordinates. Crucially, these bounds are non-asymptotic and explicit, providing quantitative control at any finite dimension and sample size rather than relying on large-sample approximations whose accuracy may be unclear in practice.
+
+\medskip
+\noindent
+Building on this stability, the spectral localization theorem situates the empirical spectrum relative to the Marchenko–Pastur law, which describes the limiting distribution of eigenvalues for the white-noise component when dimension and sample size grow proportionally. The theorem asserts that all but at most $K$ eigenvalues of the Hebbian matrix are confined to a narrow band around the Marchenko–Pastur support interval, with the width of this band controlled by logarithmic factors and vanishing as the sample size increases. Meanwhile, each archetype whose exposure-driven signal-to-noise ratio exceeds the critical Baik–Ben Arous–Péché threshold produces an eigenvalue strictly beyond the upper edge of the bulk, with probability approaching one. This threshold, which equals the square root of the aspect ratio in the basic setting, represents a fundamental phase transition: below it, no amount of spectral filtering can reliably distinguish signal from noise, while above it, the spike becomes asymptotically detectable with vanishing error probability. The theorem thus provides both a negative result, establishing the impossibility of detection in the weak-signal regime, and a positive result, guaranteeing detection when exposure is sufficiently strong.
+
+
+
+
+\vspace{3mm}
+\noindent
+\begin{theorem}[Detection thresholds for the spiked covariance operator]\label{thm:detection-thresholds}
+Let $u_\mu:=\xi^\mu/\sqrt{N}$ and consider the rank--$K$ spiked population covariance
+\[
+C\;:=\;\sigma^2 I_N + \sum_{\mu=1}^K \theta_\mu\,u_\mu u_\mu^\top,
+\qquad 
+\kappa_\mu:=\frac{\theta_\mu}{\sigma^2},
+\]
+with aspect ratio $q:=N/M_{\mathrm{eff}}$. Denote by
+\(
+\lambda_\pm(q):=\sigma^2(1\pm\sqrt q)^2
+\)
+the Marchenko--Pastur edges (cf.~\eqref{eq:mp-edge}). Let $J$ be the round--$t$ operator, which can be written as
+\[
+J = \Sigma^{1/2} S_0 \Sigma^{1/2},\qquad
+S_0:=\frac{1}{M_{\mathrm{eff}}}\sum_{k=1}^{M_{\mathrm{eff}}} Z_k Z_k^\top,
+\]
+with $\Sigma=C$ and whitened rows $Z_k$ satisfying the standing assumptions under which the isotropic MP local law holds (Theorem~\ref{thm:mp-global-law}). Assume that the number of spikes $K$ is fixed (independent of $N$), that the spike directions $u_\mu$ have unit norm, and that their Gram matrix $\Gamma:=U^\top U$ with $U:=[u_1,\dots,u_K]$ satisfies
+\[
+\varepsilon_{\mathrm{orth}}
+:=\max_{\mu\neq\nu}|\langle u_\mu,u_\nu\rangle|\to0
+\quad\text{as }N\to\infty.
+\]
+Assume additionally that the nonzero spike strengths $\{\kappa_\mu\}$ are pairwise distinct. Then, for every fixed $\delta\in(0,1)$ there exists a deterministic sequence $\varepsilon_N(\delta)\downarrow0$ such that, with probability at least $1-\delta$ for all $N$ large enough, the following hold:
+\begin{enumerate}[label=(D\arabic*)]
+\item \textbf{Bulk confinement.} All but at most $K$ eigenvalues of $J$ lie in
+\begin{equation}\label{eq:bulk-band}
+\big[\lambda_-(q)-\varepsilon_N(\delta),\ \lambda_+(q)+\varepsilon_N(\delta)\big].
+\end{equation}
+A valid choice is
+\begin{equation}\label{eq:epsilonN}
+\varepsilon_N(\delta)\;=\;C\sqrt{\frac{\log(1/\delta)+\log N}{M_{\mathrm{eff}}}}\;+\;C'\,\frac{\log^2 N}{N^{2/3}},
+\end{equation}
+for universal constants $C,C'>0$ (depending only on $q$ and the tail/regularity parameters).
+
+\item \textbf{BBP threshold (spike detection).} For each $\mu$ with $\kappa_\mu>0$ there is at most one eigenvalue of $J$ that can be asymptotically attributed to the spike $\kappa_\mu$. If $\kappa_\mu>\sqrt q$, then there exists a unique outlier eigenvalue $\lambda_\mu(J)>\lambda_+(q)$ that converges to the population-dependent value in (D3). If $\kappa_\mu\le\sqrt q$, no eigenvalue separates from the bulk edge $\lambda_+(q)$ due to that spike.
+
+\item \textbf{Outlier location (decoupled / orthogonal case).} In the idealized case where the spike directions are exactly orthonormal, $\langle u_\mu,u_\nu\rangle=\delta_{\mu\nu}$, the asymptotic location of the outlier associated with a spike of strength $\kappa>0$ is
+\begin{equation}\label{eq:outlier-loc}
+\lambda_{\mathrm{out}}(\kappa)\;=\;\sigma^2\,(1+\kappa)\Big(1+\frac{q}{\kappa}\Big).
+\end{equation}
+Moreover, $\lambda_{\mathrm{out}}(\kappa)>\lambda_+(q)$ if and only if $\kappa>\sqrt q$, and at $\kappa=\sqrt q$ the outlier merges with the upper MP edge.
+
+In the nearly-orthogonal case with $\varepsilon_{\mathrm{orth}}>0$, the outlier eigenvalues satisfy
+\[
+\lambda_\mu(J) \;=\; \lambda_{\mathrm{out}}(\kappa_\mu) \;+\; O\big(\varepsilon_{\mathrm{orth}} + N^{-1/2}\big)
+\]
+in probability, for each $\mu$ with $\kappa_\mu>\sqrt q$.
+
+\item \textbf{Eigenvector alignment.} For each $\mu$ with $\kappa_\mu>\sqrt q$, let $v_\mu$ be the (random) unit eigenvector of $J$ associated with the outlier eigenvalue near $\lambda_{\mathrm{out}}(\kappa_\mu)$, with sign chosen so that $\langle v_\mu,u_\mu\rangle\ge0$. Then
+\begin{equation}\label{eq:eig-overlap}
+\big|\langle v_\mu,u_\mu\rangle\big|^2 \ \xrightarrow{P}\ 
+\gamma(\kappa_\mu,q)
+:=\frac{1-\dfrac{q}{\kappa_\mu^2}}{1+\dfrac{q}{\kappa_\mu}}
+\in(0,1),
+\end{equation}
+as $N,M_{\mathrm{eff}}\to\infty$ with $N/M_{\mathrm{eff}}\to q$. In the nearly-orthogonal case the same limit holds, with finite-$N$ deviations of order $O(\varepsilon_{\mathrm{orth}}+N^{-1/2})$.
+\end{enumerate}
+\end{theorem}
+
+% Let $u_\mu:=\xi^\mu/\sqrt{N}$ and consider the spiked model $C:=\sigma^2 I + \sum_{\mu=1}^K \theta_\mu u_\mu u_\mu^\top$ \textcolor{blue}{questo thetha è forse un alpha-mu?} \textcolor{red}{boh :p}, with spike intensities $\kappa_\mu:=\theta_\mu/\sigma^2$ and aspect ratio $q:=N/M_{\mathrm{eff}}$. Denote by $\lambda_\pm(q):=\sigma^2(1\pm\sqrt q)^2$ the Marchenko–Pastur edges (cf.~\eqref{eq:mp-edge}). Let $J\equiv J^{(t)}_{\mathrm{KS}}$ be the round-$t$ operator. Then, for every $\delta\in(0,1)$ there exists $\varepsilon_N(\delta)\downarrow0$ such that, with probability at least $1-\delta$, the following statements hold: 
+% \begin{theorem}[Detection thresholds]\label{thm:detection-thresholds}
+% \begin{enumerate}[label=(D\arabic*)]
+% \item \textbf{Bulk confinement.} All but at most $K$ eigenvalues of $J$ lie in 
+% \begin{equation}\label{eq:bulk-band}
+% \big[\lambda_-(q)-\varepsilon_N(\delta),\ \lambda_+(q)+\varepsilon_N(\delta)\big].
+% \end{equation}
+% A valid choice is
+% \begin{equation}\label{eq:epsilonN}
+% \varepsilon_N(\delta)\;=\;C\sqrt{\frac{\log(1/\delta)+\log N}{M_{\mathrm{eff}}}}\;+\;C'\,\frac{\log^2 N}{N^{2/3}},
+% \end{equation}
+% for universal constants $C,C'>0$.
+
+% \item \textbf{BBP threshold (spike detection).} For each $\mu$: if $\kappa_\mu>\sqrt q$, then an outlier $\lambda_\mu(J)>\lambda_+(q)$ emerges; if $\kappa_\mu\le\sqrt q$, no outlier attributable to $\mu$ appears.
+
+% \item \textbf{Outlier location (decoupled case).} If $\{u_\mu\}$ are orthonormal (or $\varepsilon_{\mathrm{orth}}$-orthonormal, where $\varepsilon_{\mathrm{orth}}:=\max_{\mu\ne\nu}|\langle u_\mu,u_\nu\rangle|$, with $O(\varepsilon_{\mathrm{orth}})$ corrections), the asymptotic location is
+% \begin{equation}\label{eq:outlier-loc}
+% \lambda_{\mathrm{out}}(\kappa)\;=\;\sigma^2\,(1+\kappa)\left(1+\frac{q}{\kappa}\right),\qquad \kappa>0,
+% \end{equation}
+% and $\lambda_{\mathrm{out}}(\kappa)>\lambda_+(q)\ \Leftrightarrow\ \kappa>\sqrt q$.
+
+% \item \textbf{Eigenvector alignment.} For $\kappa_\mu>\sqrt q$, letting $v_\mu$ be the outlier eigenvector, 
+% \begin{equation}\label{eq:eig-overlap}
+% \big|\langle v_\mu,u_\mu\rangle\big|^2 \ \xrightarrow{P}\ \gamma(\kappa_\mu,q):=\frac{1-\frac{q}{\kappa_\mu^2}}{1+\frac{q}{\kappa_\mu}}\in(0,1),
+% \end{equation} 
+% with $O(\varepsilon_{\mathrm{orth}}+N^{-1/2})$ corrections in the non-exactly orthogonal case.
+
+% \item \textbf{Finite-$N$ sufficient condition.} With probability at least $1-\delta$,
+% \begin{equation}\label{eq:finiteN-thresh}
+% \kappa_\mu\ >\ \sqrt q\;+\;C\,\frac{\sqrt{\log(1/\delta)}}{N}\;+\;C'\,\frac{K}{N}\;+\;C''\,\varepsilon_{\mathrm{orth}}
+% \quad\Longrightarrow\quad 
+% \lambda_\mu(J)\ \ge\ \lambda_+(q)+c\big(\kappa_\mu-\sqrt q\big),
+% \end{equation}
+% for universal constants $c,C,C',C''>0$.
+% \end{enumerate}
+% \end{theorem}
+% \textcolor{red}{Le definizioni vanno prima.}
+% \noindent\emph{Definitions used above:} $\rho_{\mathrm{MP}}$ and $m_{\mathrm{MP}}(z)$ are the MP law and its Stieltjes transform; $S_0=\frac{1}{m}ZZ^\top$ denotes the whitened covariance in the auxiliary derivation.
+
+
+\vspace{3mm}
+\noindent
+Given a cut $\tau$ (Shuffle/MP/TW) and the cushion in \eqref{eq:epsilonN}, we define
+\begin{equation}\label{eq:keff-op}
+K_{\mathrm{eff}}(t)\;=\;\#\left\{i:\ \lambda_i\big(J^{(t)}_{\mathrm{KS}}\big)>\tau\right\},
+\end{equation}
+which, by (D1)–(D2), counts supercritical spikes (up to finite-$N$ fluctuations). Let $\{v_\mu\}_{\mu=1}^{K_{\mathrm{eff}}(t)}$ be the top eigenvectors and seed via robust binarization as in \eqref{eq:seed-binarize}–\eqref{eq:seed-align}. The alignment law \eqref{eq:eig-overlap} explains seed quality and justifies hetero–associative refinement.
+
+\vspace{3mm}
+\noindent
+Point (D1) stabilizes the bulk edge $\lambda_+(q)$; (D2) gives the BBP phase transition $\kappa_\mu>\sqrt q$; (D3)–(D4) ensure that any of the practical cuts (Shuffle/MP/TW) are interchangeable modulo the finite-$N$ cushion; (D5) provides a conservative finite-$N$ sufficient condition. In practice, $q=N/M_{\mathrm{eff}}$ and $\sigma^2$ are estimated from the lower spectrum (MP) or via null reshuffling (Shuffle), while TW/KN adjusts $\tau$ at level $\alpha$; these deliver the same $K_{\mathrm{eff}}(t)$ with high probability. The resulting seeds inherit nontrivial overlap with archetypes and feed the TAM stage. Full proofs and the supporting lemmata (MP universality + isotropic local law, decoupling, scalar secular equation, eigenvector overlap) are deferred to the App. \ref{subapp:bbp-details}.
+
+\vspace{3mm}
+\noindent
+The explicit formula for outlier eigenvalue locations (D3) follows from solving a scalar fixed-point equation derived through the resolvent formalism of random matrix theory. When the archetypes satisfy an approximate orthogonality condition, the matrix resolvent restricted to the archetypal span decouples into a scalar multiple of the identity up to small corrections, reducing the high-dimensional spectral problem to $K$ independent one-dimensional equations. Each such equation relates the outlier eigenvalue to the corresponding signal-to-noise parameter through the Marchenko–Pastur Stieltjes transform,
+yielding the closed-form expression \eqref{eq:outlier-loc}. This formula has immediate interpretability: it shows that outlier eigenvalues grow monotonically with exposure, that they asymptotically scale linearly for strong signals and approach the bulk edge as a square-root singularity at the threshold, and that the aspect ratio $q$ directly controls the separation between signal and noise. Moreover, the formula enables precise quantitative predictions that can be compared against empirical spectra to validate the theoretical model and diagnose deviations arising from assumption violations such as non-orthogonality or heavy-tailed noise.
+
+\vspace{3mm}
+\noindent
+Complementing the eigenvalue results, the eigenvector alignment theorem (D4) characterizes how much overlap the empirical eigenvector achieves with the true archetypal direction. For signal strengths above the detection threshold, the squared cosine of the angle between the spike eigenvector and the archetype converges in probability to the deterministic function $\gamma(\kappa_\mu,q)$ given in \eqref{eq:eig-overlap}. This alignment function is zero at the threshold ($\kappa_\mu \to \sqrt{q}$), reflecting the geometric reality that the eigenvector cannot distinguish signal from noise at criticality, then increases monotonically toward one as exposure ($\kappa_\mu$) grows, with the rate of increase controlled by the aspect ratio $q$. The formula makes explicit the tradeoff between detectability and localization: merely detecting that a spike exists requires only crossing the threshold, but achieving high-fidelity archetype recovery demands substantially stronger exposure. In the federated context, this has direct implications for the subsequent Hopfield retrieval phase, as the quality of the associative memory depends critically on how well the learned weight matrix aligns with the true archetypal projectors, which in turn depends on the eigenvector alignment achieved during the spectral extraction step.
+
+
+\vspace{3mm}
+\noindent
+From an operational perspective, the spectral theory translates directly into the federated learning pipeline through several concrete mechanisms. First, the exposure-driven spike formula \eqref{eq:spiked-decomp} explains why certain metrics computed during training exhibit particular dynamics: as clients repeatedly sample from archetypes with heterogeneous frequencies, the corresponding eigenvalues grow at rates proportional to exposure, which in turn determines when archetypes cross the detectability threshold (D2) and begin contributing to the effective dimensionality of the recovered subspace $K_{\mathrm{eff}}(t)$. Second, the concentration bounds (D1) justify the use of hard eigenvalue thresholds for determining which directions to retain, with the threshold $\tau$ in \eqref{eq:keff-op} set slightly above the upper Marchenko–Pastur edge $\lambda_+(q)$ to account for finite-sample fluctuations. Third, the eigenvector alignment formula (D4) predicts the Frobenius distance between the empirical Hebbian matrix and its population counterpart as a function of exposure history, enabling quantitative tracking of estimation quality across rounds. Fourth, the coverage diagnostic, which records which classes were present in each round's client selection, directly connects to the spike structure, since archetypes with zero exposure ($\alpha_\mu^{(t)}=0$) cannot produce spikes and thus remain invisible to spectral methods until exposure resumes.
+
+
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\linewidth]{figures/panel2_bbp_validation.pdf}
+    \caption{Spectral validation of the BBP framework in federated Hebbian learning. 
+    \textit{(Top)} Panel A displays the top 10 eigenvalues of the empirical Hebbian matrix for three representative exposure levels ($M \in \{400, 1600, 6400\}$), with the Marchenko–Pastur upper edge $\lambda_+(q)$ shown as a dashed line for each aspect ratio $q = N/M$. Filled markers denote eigenvalues above the MP threshold (detected spikes corresponding to the three strong archetypes), while empty markers indicate eigenvalues below threshold. The near-absence of empirical spikes for the weak archetypes validates that exposure below the BBP threshold $\kappa < \sqrt{q}$ prevents spectral detection despite their theoretical presence.
+    \textit{(Bottom Left)} Panel B compares empirical spike eigenvalues (averaged over 50 trials) against the closed-form BBP prediction $\lambda_{\text{out}}(\kappa, q)$ across all three archetypes and exposure levels. The near-diagonal scatter ($R^2 \in [0.955, 0.977]$) confirms that the spiked-Wishart population model, combined with concentration guarantees, accurately predicts empirical outlier locations at finite sample size ($N=400$).
+    \textit{(Bottom Right)} Panel C shows eigenvector overlaps $|\langle v, u \rangle|^2$ compared against the theoretical alignment formula $\gamma(\kappa,q)$ from Theorem D4. The median gap between empirical and theoretical values is $0.0163$, with the maximum gap of $0.0486$ concentrated on the weakest archetype ($\xi_3$). This systematic gap for lower-exposure archetypes is consistent with the finite-size correction $O(N^{-1/2})$ predicted by the theory: the formula $\gamma(\kappa,q)$ is asymptotic ($N \to \infty$), and at $N=400$ one observes deviations that scale inversely with exposure strength. The variance of empirical overlaps visibly decreases as $M$ increases (moving left to right), reflecting the convergence of the sample estimator to its population limit.
+    }
+
+    \label{fig:bbp-panel}
+\end{figure}
+
+
+
+% \paragraph*{MP threshold and intensity estimation \textcolor{red}{DA ARMONIZZARE}}\label{app:mp-details}
+% Estimate \(\sigma^2\) from the lower portion of the spectrum (e.g., lower–half mean/median), set \(q=N/M_{\mathrm{eff}}\), and compute \(\lambda_+(q)\) as in \eqref{eq:app-mp-edge}. With a guard band \(\delta_N>0\), declare
+% \begin{equation}\label{eq:app-keff-mp}
+% \widehat K_{\mathrm{eff}}^{\mathrm{MP}}(t)\;=\;\#\Big\{i:\ \lambda_i(J)>\lambda_+(q)+\delta_N\Big\}.
+% \end{equation}
+% By Theorem~\ref{thm:detection-thresholds} (D1)–(D2), \(\widehat K_{\mathrm{eff}}^{\mathrm{MP}}(t)\) matches the number of supercritical spikes with high probability. For each outlier \(\lambda\), estimate its strength by the closed–form inversion of \eqref{eq:app-outlier-loc}:
+% \begin{equation}\label{eq:app-kappa-inv}
+% \widehat\kappa(\lambda)\;=\;\frac{\big(\lambda/\sigma^2-1-q\big)+\sqrt{\big(\lambda/\sigma^2-1-q\big)^2-4q}}{2}.
+% \end{equation}
+% This provides a continuous “exposure intensity” diagnostic consistent with (D5).
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=1\linewidth]{figures/panel_pathological.png}
+    \caption{Pathological failure modes at the extremes of the reconstruction blend. At round $t$, the reconstruction operator is $J^{(t)}_{\mathrm{rec}}=(1-w)A_t+wB_t$, where $A_t$ encodes the reconstructed memory from the previous round and $B_t$ is the unsupervised batch correlator from current data. \textit{Left} ($w = 0$, pure memory-driven): the inferred mixture trajectory collapses toward a simplex vertex, revealing inadequate plasticity; the magnetization shows the same rigidity, with only the first-seen archetype remaining high while the others stay near zero despite subsequent cues. \textit{Right} ($w = 1$, pure data-driven): the inferred trajectory nearly overlays the ground-truth path (tracking error is essentially zero), but this “perfect” tracking reflects over-plasticity and immediate forgetting: magnetizations rise when the instantaneous cue for a class increases and decay as soon as it fades, indicating a lack of retention. Visual encoding: stars = ground truth, circles = inferred; short arrows mark per-round errors; viridis colormap encodes early-to-late rounds.}
+    \label{fig:simplex_pathological}
+\end{figure}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=1\linewidth]{figures/panel_adaptive.png}
+    \caption{Adaptive regularization recovers robust schedule tracking without manual tuning. We learn $w(t)$ via an entropy-based controller that maps a sign-consistency entropy between $A_t$ and $B_t$ to a raw target $w_{\mathrm{raw}}$, followed by a damped exponential moving average with uncertainty-modulated coefficient $\alpha\in[\alpha_{\min},\alpha_{\max}]$: higher uncertainty yields stronger smoothing (smaller $\alpha$), while stable phases permit faster adaptation (larger $\alpha$). \textit{Left}: on the 3-class simplex, the inferred trajectory closely tracks the ground truth yet remains slightly biased toward the interior, evidencing memory retention during distributional changes; error arrows remain short, with small transient increases at rapid transitions only. \textit{Center}: magnetizations $m_k(t)$ evolve smoothly and reach $m_k\approx1$ for each class as soon as its cue is sufficient, without suppressing previously learned archetypes. \textit{Right}: the learned $w(t)$ interpolates online between the memory-driven and data-driven regimes, preventing oscillations and catastrophic forgetting while maintaining responsiveness to non-stationarity.
+    At initialization, $w(t)$ is close to $1$ because the controller only observes the unsupervised batch signal. Over the next rounds, as the data stream is dominated by archetype $1$ and the others are scarcely represented, $w(t)$ decreases toward more conservative values to preserve existing memories. When the cue for the second (and subsequently the third) archetype rises, the controller correctly anticipates the need to adapt to distributional drift and increases $w(t)$, making the system temporarily more plastic. Finally, once all archetypes have been learned and no novel classes are presented, $w(t)$ quickly converges back toward conservative values (i.e., toward $0$), prioritizing retention over further change.
+}
+    \label{fig:simplex_adaptive}
+\end{figure}
+
+\medskip
+\noindent
+Taken together, these results close the loop between theory and practice: the detection rule in \S~2.2 (MP edge with finite–$N$ cushion) operationalizes the threshold $\tau$ in~\eqref{eq:keff}, while (D1)–(D4) explain why the effective rank and alignment metrics evolve monotonically with cumulative exposure. We now stress-test this mechanism under non-stationarity by letting the round-level class mixture $\pi_t$ drift on the simplex and by probing the stability–plasticity trade-off via the memory/data weight $w$. In this regime, exposure not only determines when BBP outliers emerge but also how quickly eigenvectors realign to the active archetypes; consequently, $K_{\mathrm{eff}}(t)$ and Frobenius error become sensitive barometers of plasticity. The next subsection translates these predictions into geometry on $\Delta^{K-1}$ and quantifies tracking under controlled $w$-ablations.
+
+
+We study the role of exposure in a continual, federated setting where the round–level class mixture \(\pi_t\) drifts on the simplex. Three clients (\(L=3\)) observe noisy examples from \(K=3\) archetypes and contribute unsupervised correlators. The population operator at round \(t\) admits a spiked–Wishart decomposition with spike strengths proportional to class exposures in \(\pi_t\); exposure therefore governs BBP outliers and eigenvector alignment, enabling detectability as \(K_{\mathrm{eff}}(t)\) crosses the spectral cut (Thm.~\ref{thm:detection-thresholds}). Fixed-\(w\) ablations expose the extremes: with \(w=0\) (pure memory) the inferred trajectory collapses toward a vertex and later cues are ignored; with \(w=1\) (pure data) the system tracks \(\pi_t\) but catastrophically forgets previously learned archetypes (Fig.~\ref{fig:simplex_pathological}). 
+We embed the ground–truth schedule \(\pi_t\) and its estimate \(\hat{\pi}_t\) as barycentric trajectories on \(\Delta^{K-1}\) (\(K=3\)). Stars mark \(\pi_t\); circles mark \(\hat{\pi}_t\); short arrows connect them round–by–round to visualize tracking error, with a time colormap from early to late rounds. Geometry encodes exposure: increasing exposure of class \(k\) moves \(\pi_t\) toward vertex \(k\), while persistence near a vertex indicates sustained exposure. Because spike strengths scale with exposure, motion on the simplex directly modulates outlier emergence and eigenvector–to–archetype alignment; under adequate plasticity, error arrows remain short except at rapid transitions, and the estimate avoids “perimeter chasing”, a hallmark of over–plasticity (contrast Fig.~\ref{fig:simplex_pathological}).
+These results underscore the need to devise an algorithm for an adaptive $w_t$ that can accurately control the balance between plasticity and stability.
+
+\subsubsection{Plasticity and Stability: the role of $w_t$}\label{app: w}
+In this paragraph, we will give more details about the determination of an adaptive $w_t$. Consider the $t$-th round. The update rule is the following
+\begin{equation}
+  J_t^{(\mathrm{rec})}(w_t) = (1 - w_t)\,A_t + w_t\,B_t,
+\end{equation}
+where $A_t = N^{-1}\,\bm{\hat\xi}\bm{\hat\xi}^{\top}$ and
+$B_t = N^{-1} M_{\mathrm{round}}^{-1}\sum_{l=1}^{L}\bm{\eta}_l \bm{\eta}_l^{\top}$.
+An ideal adaptive $w_t$ must encapsulate both the information provided by the data quality and any distributional shifts across rounds (i.e., the addition of new archetypes). We therefore consider the two matrices $A_t$ and $B_t$ and, to keep the notation light, set $A = A_t$ and $B = B_t$, and define:
+\begin{align*}
+  s^{A}_{ij} &= \operatorname{sign}(A_{ij}),\\
+  s^{B}_{ij} &= \operatorname{sign}(B_{ij}).
+\end{align*}
+At this point, we construct the following probability:
+\begin{equation}
+p := \dfrac{1}{N(N-1)}\SOMMA{i \not = j}{}\textbf{1}\{s^A_{ij} = s^B_{ij}\}
+\end{equation}
+Essentially, $p$ measures how much the two matrices agree in sign; thereafter we compute the binary entropy and set
+\begin{equation}
+    H_{AB} = h_2(p)= -p\log_2 p - (1-p)\log_2 (1-p).
+\end{equation}
+Now, we make the following remarks. Matrix $B$ and matrix $A$ are, respectively, a Hebbian matrix of examples and a Hebbian matrix of reconstructed archetypes. The crucial point is that, since the examples are generated from the archetypes with an error margin given by $r$, there will always exist a minimum threshold of difference between these two matrices, even in the case where the Hebbian matrix of reconstructed patterns exactly matches the Hebbian matrix of the true patterns. Therefore, considering that, by simple probabilistic arguments,
+\begin{equation}
+\mathbb{P}\bigl(\eta_i\eta_j=\xi^\mu_i\xi^\mu_j\bigr) = \frac{1 + r^2}{2},
+\end{equation}
+we define $H_{\min}$ as the minimum uncertainty threshold of the data, namely:
+\begin{equation}
+H_{\min} = h_2\!\left(\frac{1 + r^2}{2}\right).
+\end{equation}
+Trivially, $H_{\max}$ occurs when $r=0$, hence $H_{\max}=h_2\!\left(\tfrac{1}{2}\right)=1$.
+We are therefore ready to define $w_t$:
+\begin{equation}
+  w_t = \frac{H_{AB} - H_{\min}(r)}{1 - H_{\min}(r)}.
+\end{equation}
+% Note that $w_t=0$ when $H_{AB}=H_{\min}(r)$, that is, essentially when there is no change
+% in the data, only noise. Conversely, $w_t=1$ when $H_{AB}=1$, i.e., when $p=\tfrac{1}{2}$,
+% corresponding to maximum uncertainty in the data, which may signal a distributional change.
+% \textcolor{red}{Spiegare bene la doppia direzionalità del numeratore.}
+It is worth emphasizing that the numerator \(H_{AB} - H_{\min}(r)\) can become small in two qualitatively different ways. First, for a fixed sign–consistency level \(H_{AB}\), an increase in \(H_{\min}(r)\) reflects a degradation of the example–to–archetype channel (smaller \(r\)), so that the observed entropy is largely explained by corruption noise and the controller correctly drives \(w_t \to 0\). Second, for a fixed noise level \(r\), the entropy \(H_{AB}\) itself may relax downwards toward \(H_{\min}(r)\): the data quality is stable, but the sign pattern of \(B\) becomes increasingly consistent with that of \(A\), indicating that the current round carries little genuinely new information, and again \(w_t\) is damped. In contrast, when \(H_{AB}\) approaches its maximal value \(1\), the numerator is large: the round–wise correlator becomes nearly indistinguishable from random in sign with respect to \(A\), which we interpret as a strong signal of distributional change and respond to by increasing plasticity (large \(w_t\))\footnote{Computationally, to prevent abrupt changes in $w_t$, we apply an exponential moving average (EMA), namely: $w_t = \alpha\, w_{\mathrm{current}} + (1-\alpha)\, w_{t-1}$ with $\alpha \in [0,1]$.}.
+
+
+\vspace{2mm}
+% \noindent In summary, the adaptive weight $w_t$ translates the observed sign-consistency
+% between $A_t$ and $B_t$ into a normalized entropy score anchored by the intrinsic
+% noise floor $H_{\min}(r)$ and capped at the maximally uncertain case $H_{\max}=1$.
+% When the data distribution is stable, $H_{AB}\!\approx H_{\min}(r)$ and the rule favors
+% the archetype-driven term $A_t$; when distributional shifts or novel archetypes emerge,
+% $H_{AB}$ rises toward one and the update increasingly prioritizes the data-driven term $B_t$.
+% This yields a principled, scale-free mechanism to track changes across rounds while remaining
+% robust to the baseline variability induced by the quality parameter $r$. Empirically, this
+% balance stabilizes the dynamics and improves retrieval under both stationary and shifting regimes.
+
+% \noindent In this recommended configuration we control plasticity with an \emph{adaptive} \(w_t\).
+
+
+% driven by a sign-consistency/entropy signal between the current batch correlator and the consolidated memory and stabilized by uncertainty-aware damping. This controller increases \(w_t\) when exposure shifts rapidly (to integrate genuinely new signal) and decreases \(w_t\) during stable phases (to preserve retention). 
+Empirically, the resulting panels in Fig.~\ref{fig:simplex_adaptive} summarize the behavior: (A) the inferred mixture \(\hat{\pi}_t\) tracks the true \(\pi_t\) with small lag and without collapsing toward the center; (B) the round-wise magnetization plot shows that all archetypes remain stored as attractors throughout; (C) the \(w_t\) trajectory mirrors the drift profile, rising around transitions and decaying during plateaus. Quantitatively, the adaptive controller attains low total-variation error between \(\pi_t\) and \(\hat{\pi}_t\), a small phase lag, and a stable count \(K_{\mathrm{eff}}(t)=3\) across rounds, while keeping mean magnetization high.
+
+
+Overall, the experiment demonstrates that exposure is the correct organizing principle in federated continual learning: when class exposure grows, spikes split from the MP bulk and seed disentanglement; when exposure wanes, the adaptive \(w_t\) protects consolidated modes from being overwritten. This resolves the stability–plasticity dilemma without manual tuning, yielding faithful schedule tracking and robust recall under drift (compare the adaptive panels in Fig.~\ref{fig:simplex_adaptive} against the fixed-\(w\) ablations in Fig.~\ref{fig:simplex_pathological}). 
+
+
+\medskip
+\noindent
+Having established that exposure governs detectability when classes are fixed, we now escalate non-stationarity by allowing genuinely new archetypes to emerge mid-training. The question becomes whether the network can \emph{expand} its representational subspace promptly, while safeguarding previously consolidated attractors.
+
+
+
+\subsection{Continual learning and network plasticity}
+Continual learning poses a classical stability–plasticity dilemma: the data distribution evolves over time and the model must absorb genuinely new structure without overwriting consolidated knowledge. In the previous section we showed that exposure governs detectability when classes are fixed but their prevalence drifts over time. We now intensify non-stationarity by allowing \emph{new archetypes to emerge mid-training}, sharpening the question addressed here: can the network expand its representational subspace promptly while preserving previously consolidated attractors?
+
+Concretely, the system starts with \(K_{\mathrm{old}}=3\) classes; at round \(t_{\mathrm{intro}}=12\) a four-round ramp gradually injects \(K_{\mathrm{new}}=3\) additional classes, and thereafter the mixture stabilizes with non-zero exposure for all \(K_{\mathrm{old}}{+}K_{\mathrm{new}}=6\) modes. Clients operate in the standard federated pipeline without replay, so adaptation hinges on network plasticity rather than buffer effects. The recommended configuration modulates plasticity via an \emph{adaptive} weight \(w_t\) (App.~\ref{app: w}), while fixed or purely smoothed baselines provide controls.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=1\linewidth]{figures/novelty_detection_panel_v1.png}
+    \caption{Dynamics of archetype emergence in a federated unsupervised learning system. The system initially learns $K_{\mathrm{old}}=3$ archetypes, with $K_{\mathrm{new}}=3$ additional archetypes introduced at round $t_{\mathrm{intro}}=12$ following a gradual ramp schedule over 4 rounds. Each client processes examples in a federated setting ($L=3$ clients, $N=400$-dimensional binary patterns, $r_{\mathrm{ex}}=0.8$ signal-to-noise ratio) across $T=24$ communication rounds. Results are averaged over 30 independent random seeds (shaded regions indicate standard deviation).
+    \textit{(left)}: Effective dimensionality $K_{\mathrm{eff}}$ estimated via spectral analysis of the coupling matrix $J$. The horizontal dashed line at $K_{\mathrm{old}}=3$ marks the initial archetype count, while the line at $K_{\mathrm{total}}=6$ indicates the target dimensionality. The vertical dashed line at $t=12$ denotes the introduction time, with the shaded region representing the gradual ramp phase. The system successfully detects the emergence of new archetypes, with $K_{\mathrm{eff}}$ transitioning from 3 to 6 within 2–3 rounds after introduction.
+    \textit{(center)}: Overlap $m_k$ quantifying the quality of archetype reconstruction. Solid lines represent the mean overlap with old archetypes (classes 1–3), while dashed lines show overlap with newly introduced archetypes (classes 4–6). Old archetypes maintain high retrieval accuracy ($m_{\mathrm{old}} \approx 0.8$–$1.0$) throughout training. New archetypes exhibit rapid learning dynamics, achieving $m_{\mathrm{new}} > 0.6$ within the ramp phase and reaching near-perfect retrieval ($m_{\mathrm{new}} \approx 1.0$) by round 19.
+    \textit{(right)}: Relative spectral gap $\Delta\lambda/\lambda$ at the $K_{\mathrm{old}}$ boundary, defined as $(\lambda_{K_{\mathrm{old}}} - \lambda_{K_{\mathrm{old}}+1})/\lambda_{K_{\mathrm{old}}}$, where $\lambda_k$ are eigenvalues of the propagated coupling matrix ordered by magnitude. The gap exhibits a sharp decrease at $t=12$–$14$, signaling the breakdown of the $K_{\mathrm{old}}$-dimensional manifold assumption and providing a spectral signature of novelty emergence. The gap stabilizes at low values ($<0.2$) after successful expansion to $K_{\mathrm{total}}=6$ dimensions, consistent with a well-balanced six-archetype representation.
+    }
+    \label{fig:novelty_detection}
+\end{figure}
+
+The main results are summarized in Fig.~\ref{fig:novelty_detection}. Panel~A tracks the effective dimensionality \(K_{\mathrm{eff}}(t)\) from the spectrum: a clear transition occurs within \(2\text{–}3\) rounds after \(t_{\mathrm{intro}}\), with \(K_{\mathrm{eff}}\) rising from 3 to 6 and the ramp interval visibly marked, evidence of low-latency detection. The relative spectral gap at the \(K_{\mathrm{old}}\)-boundary contracts during novelty and re-stabilizes thereafter (Panel~C), providing a model-agnostic spectral signature of class emergence. Panel~B separates retrieval for old and new classes via Mattis overlaps: the new modes climb rapidly during the ramp while the old ones undergo only a mild, transient dip and promptly recover, evidence that plasticity is targeted rather than indiscriminate. 
+% Quantitatively, across seeds the adaptive policy attains a higher detection rate and shorter latency than a fixed-\(w\) baseline (e.g., \(\approx\!92\%\) vs.\ \(\approx\!67\%\) detection with latency \(\sim\!2\) rounds), while preserving retrieval on pre-existing classes. 
+Taken together, these results show that network plasticity is engaged precisely when novel directions gain exposure, enabling timely expansion of the representational subspace without catastrophic forgetting and extending the exposure-based picture of the previous section from imbalance to genuine class emergence.
+
+% The mechanism enabling this balance is the \emph{entropy-guided} controller for the adaptive weight \(w_t\), which compares the sign structure of the current batch correlator with the consolidated memory to produce a normalized uncertainty signal \(H_{AB}\) (App.~\ref{app: w}); high \(H_{AB}\) at novelty onset briefly raises \(w_t\) to integrate new directions, then \(H_{AB}\) declines and \(w_t\) recedes to protect retention, avoiding oscillations through temporal damping. Across strategies, the recommended adaptive scheme (adaptive-EMA) attains higher detection rate and lower latency than fixed or purely smoothed baselines, with superior preservation of old-class retrieval—precisely the stability–plasticity compromise sought in continual learning (see also the diagnostic evolution of \(K_{\mathrm{eff}}\), overlaps, spectral gap, \(w_t\), and \(H_{AB}\) over time). 
+
+
+
+
+
+
+
+
+
+
+% \textcolor{red}{La seguente sottosezione è da uniformare dal punto di vista della notazione.}
+
+% \noindent
+% The fundamental challenge in federated Hebbian learning is to determine when and why archetypal structure becomes spectrally visible in the server-side estimator constructed from heterogeneous, fragmented client data. At each communication round, the server observes only contemporaneous samples aggregated across clients with varying class coverage, and from these samples constructs an unsupervised Hebbian matrix that must reliably encode global patterns despite never having direct access to the complete data distribution. The spectral theory developed here provides a principled framework for understanding this emergence of structure, connecting the federated sampling process to classical results in random matrix theory and yielding quantitative predictions about detectability thresholds, eigenvalue locations, and eigenvector alignment that can be verified experimentally and used to guide algorithm design.
+
+% The population counterpart of the round-wise Hebbian estimator admits a canonical spiked-Wishart decomposition into isotropic noise plus a finite-rank signal aligned with the true archetypes. Specifically, the expected matrix takes the form of a scaled identity representing bulk randomness, augmented by a sum of rank-one projectors onto the archetypal directions, each weighted by a coefficient proportional to that archetype's exposure in the current round. Here exposure quantifies the probability that a given class is selected across the federation at time $t$, aggregating the heterogeneous local distributions maintained by individual clients. This decomposition immediately suggests a spectral lens: if exposure is sufficiently strong, the corresponding rank-one signal should manifest as an eigenvalue separated from the bulk spectrum of the noise component, with its eigenvector aligned to the ground-truth archetype. The central question is then to make this intuition precise, determining the exact threshold at which separation occurs, characterizing the finite-sample fluctuations around the asymptotic predictions, and establishing how the federated structure of data collection affects these quantities.
+
+% The concentration result in operator norm provides the foundational probabilistic guarantee that licenses all subsequent spectral inference. It establishes that the empirical Hebbian estimator remains within a thin operator-norm neighborhood of its population expectation with exponentially high probability, where the deviation bound scales linearly with the effective sample size of the round. In the single-round regime with fixed aspect ratio between dimension and per-client samples, this translates into exponential concentration in the ambient dimension, ensuring that the bulk edges and spike locations predicted by the population model are not washed out by finite-sample variability. The proof exploits sub-Gaussian tail bounds for the individual example coordinates and applies matrix concentration inequalities to the aggregated outer product, yielding constants that depend on the noise variance and can be further refined under bounded-variable assumptions such as Rademacher coordinates. Crucially, these bounds are non-asymptotic and explicit, providing quantitative control at any finite dimension and sample size rather than relying on large-sample approximations whose accuracy may be unclear in practice.
+
+% Building on this stability, the spectral localization theorem situates the empirical spectrum relative to the Marchenko-Pastur law, which describes the limiting distribution of eigenvalues for the white-noise component when dimension and sample size grow proportionally. The theorem asserts that all but at most $K$ eigenvalues of the Hebbian matrix are confined to a narrow band around the Marchenko-Pastur support interval, with the width of this band controlled by logarithmic factors and vanishing as the sample size increases. Meanwhile, each archetype whose exposure-driven signal-to-noise ratio exceeds the critical Baik-Ben Arous-Péché threshold produces an eigenvalue strictly beyond the upper edge of the bulk, with probability approaching one. This threshold, which equals the square root of the aspect ratio in the basic setting, represents a fundamental phase transition: below it, no amount of spectral filtering can reliably distinguish signal from noise, while above it, the spike becomes asymptotically detectable with vanishing error probability. The theorem thus provides both a negative result, establishing the impossibility of detection in the weak-signal regime, and a positive result, guaranteeing detection when exposure is sufficiently strong.
+
+% The explicit formula for outlier eigenvalue locations follows from solving a scalar fixed-point equation derived through the resolvent formalism of random matrix theory. When the archetypes satisfy an approximate orthogonality condition, the matrix resolvent restricted to the archetypal span decouples into a scalar multiple of the identity up to small corrections, reducing the high-dimensional spectral problem to $K$ independent one-dimensional equations. Each such equation relates the outlier eigenvalue to the corresponding signal-to-noise parameter through the Marchenko-Pastur Stieltjes transform, yielding the closed-form expression that the outlier location equals the noise variance times one plus the signal strength times one plus the aspect ratio divided by the signal strength. This formula has immediate interpretability: it shows that outlier eigenvalues grow monotonically with exposure, that they asymptotically scale linearly for strong signals and approach the bulk edge as a square-root singularity at the threshold, and that the aspect ratio directly controls the separation between signal and noise. Moreover, the formula enables precise quantitative predictions that can be compared against empirical spectra to validate the theoretical model and diagnose deviations arising from assumption violations such as non-orthogonality or heavy-tailed noise.
+
+% Complementing the eigenvalue results, the eigenvector alignment theorem characterizes how much overlap the empirical eigenvector achieves with the true archetypal direction. For signal strengths above the detection threshold, the squared cosine of the angle between the spike eigenvector and the archetype converges in probability to a deterministic function of the signal-to-noise ratio and aspect ratio. This alignment function is zero at the threshold, reflecting the geometric reality that the eigenvector cannot distinguish signal from noise at criticality, then increases monotonically toward one as exposure grows, with the rate of increase controlled by the aspect ratio. The formula makes explicit the tradeoff between detectability and localization: merely detecting that a spike exists requires only crossing the threshold, but achieving high-fidelity archetype recovery demands substantially stronger exposure. In the federated context, this has direct implications for the subsequent Hopfield retrieval phase, as the quality of the associative memory depends critically on how well the learned weight matrix aligns with the true archetypal projectors, which in turn depends on the eigenvector alignment achieved during the spectral extraction step.
+
+% The universality and isotropic local law provide the technical machinery that underpins the outlier analysis. Universality asserts that the bulk spectral distribution of the whitened sample covariance depends only on the first and second moments of the data generating process, not on higher-order details of the distribution. This means that the Marchenko-Pastur law, originally derived under Gaussian assumptions, continues to govern the spectrum even when the data coordinates are non-Gaussian, provided they satisfy mild moment conditions such as sub-Gaussian tails. The isotropic local law strengthens this statement by showing that the resolvent, when evaluated at any spectral parameter away from the real axis and tested against any pair of deterministic vectors, concentrates around its deterministic Marchenko-Pastur approximation with high probability. The uniformity over collections of vectors with controlled cardinality enables simultaneous control of all relevant matrix entries, which is essential for establishing the decoupling lemma that reduces the multi-archetype interaction to scalar equations.
+
+% The decoupling lemma itself formalizes the intuition that when archetypes are approximately orthogonal, their spectral contributions do not interfere. By showing that the resolvent restricted to the archetypal subspace is approximately diagonal with diagonal entries given by the scalar Marchenko-Pastur transform, the lemma validates treating each archetype independently in the outlier equation. The error term in this approximation depends on two factors: the maximum pairwise inner product between distinct archetypes, which quantifies how much they violate orthogonality, and a statistical fluctuation term that vanishes at rate $N^{-1/2}$. This decomposition clarifies when the simplified scalar analysis is trustworthy and suggests diagnostics for detecting scenarios where archetype overlap is large enough to require a more sophisticated coupled analysis. In practice, quasi-orthogonality is often a reasonable approximation for high-dimensional patterns learned from distinct classes, but violations can occur when classes share structure or when dimension is not sufficiently large relative to the number of archetypes.
+
+% The finite-sample refinements extend the asymptotic theory to provide actionable bounds at practical dimensions and sample sizes. The refined detection threshold incorporates explicit corrections that account for concentration fluctuations, the number of competing archetypes, and the degree of non-orthogonality. These corrections typically scale as logarithmic factors in the dimension or inverse powers of the dimension, becoming negligible in the asymptotic regime but potentially significant when working with moderate-scale problems. The finite-sample bounds enable conservative decision-making, ensuring that claimed detections have guaranteed error probabilities rather than relying on asymptotic approximations whose accuracy may deteriorate at finite scale. Similarly, the refined eigenvalue location bounds provide not just point estimates but confidence intervals that account for both statistical fluctuation and systematic bias, allowing practitioners to assess whether observed deviations from the theoretical prediction indicate genuine model misspecification or are consistent with expected finite-sample variability.
+
+% % The local eigenvalue law provides microscopic control of the empirical spectral density near any specified location within the bulk. While the global localization theorem confines most eigenvalues to the Marchenko-Pastur support, the local law quantifies how many eigenvalues fall within any small interval, showing that the empirical counting measure converges to the Marchenko-Pastur density at a rate controlled by the interval width and dimension. This enables fine-grained tests for detecting weak spikes that lie very close to the bulk edge, where global localization alone may not distinguish signal from the rightmost bulk eigenvalues. The local law also supports bandwidth selection for spectral density estimation and provides the foundation for analyzing spacing statistics and other higher-order spectral properties that can reveal subtle structure not captured by outlier detection alone.
+
+% From an operational perspective, the spectral theory translates directly into the federated learning pipeline through several concrete mechanisms. First, the exposure-driven spike formula explains why certain metrics computed during training exhibit particular dynamics: as clients repeatedly sample from archetypes with heterogeneous frequencies, the corresponding eigenvalues grow at rates proportional to exposure, which in turn determines when archetypes cross the detectability threshold and begin contributing to the effective dimensionality of the recovered subspace. Second, the concentration bounds justify the use of hard eigenvalue thresholds for determining which directions to retain, with the threshold set slightly above the upper Marchenko-Pastur edge to account for finite-sample fluctuations. Third, the eigenvector alignment formula predicts the Frobenius distance between the empirical Hebbian matrix and its population counterpart as a function of exposure history, enabling quantitative tracking of estimation quality across rounds. Fourth, the coverage diagnostic, which records which classes were present in each round's client selection, directly connects to the spike structure since archetypes with zero exposure cannot produce spikes and thus remain invisible to spectral methods until exposure resumes.
+
+% The spectral sharpening mechanism provided by pseudo-inverse propagation exploits the differential effect of the nonlinear map on bulk versus spike eigenvalues. For eigenvalues in the bulk, the propagation map acts as a mild upward drift that does not substantially alter their relative positions, while for spike eigenvalues significantly above the bulk, the map drives them rapidly toward saturation at one. This amplification of the separation between signal and noise occurs because the propagation dynamics approximate a sigmoid nonlinearity that compresses values near zero and one while expanding differences in the intermediate range. After a small number of propagation steps, spikes that were marginally separated from the bulk become clearly distinguished, enabling the use of simple hard thresholds for spectral filtering. The disentangling stage then operates on the leading subspace extracted after propagation, using alignment-based clustering to group eigenvectors that correspond to the same archetype and pruning near-duplicates that arise from finite-sample noise. The success of this procedure depends critically on the propagation step having provided sufficient initial separation, which in turn depends on the archetypes having been above threshold before propagation began.
+
+% The federated imbalance functional provides a global measure of heterogeneity in the exposure distribution and directly bounds the effective number of detectable archetypes. When exposure is uniformly distributed across all archetypes, the imbalance is minimized and the maximum number of archetypes can be detected, while highly skewed exposure concentrates signal strength on a few dominant classes and leaves others below threshold. This connects the federated data partition, which determines which clients observe which classes, to the spectral capacity of the algorithm. In particular, coverage design strategies that ensure balanced representation of all classes across the federation will tend to maximize the number of detectable archetypes, whereas highly imbalanced federated settings may detect only the most frequent classes. The imbalance functional thus serves as a planning tool for federation design, indicating how much exposure is needed to guarantee detection of rare classes and quantifying the cost of heterogeneity in terms of reduced spectral capacity.
+
+% The round-to-round stability bound addresses the temporal variability of the effective dimensionality in single-mode operation, where each round involves independent sampling. By analyzing the variance of the number of spikes that exceed the threshold as a function of exposure fluctuations and concentration deviations, the bound shows that the expected rate of change in effective dimensionality scales as the inverse square root of per-client sample size. This validates the empirical observation that seed-averaged trends in detection counts are smooth despite substantial per-round variation, and it provides guidance for choosing the number of seeds needed to reliably estimate expected behavior. More broadly, the stability result connects the microscopic randomness of individual rounds to the macroscopic regularity of averaged trajectories, bridging statistical learning theory and stochastic approximation.
+
+% Taken together, these results establish a complete theoretical foundation for spectral methods in federated Hebbian learning. They explain why exposure determines detectability, provide exact formulas for eigenvalue and eigenvector behavior as functions of the federated data distribution, quantify finite-sample corrections that enable reliable threshold selection, and connect spectral diagnostics to downstream retrieval performance. The theory is not purely descriptive but actively prescriptive: it tells the practitioner how to set thresholds based on estimated aspect ratio and noise level, when to prefer Marchenko-Pastur baselines over shuffle controls, how to interpret the evolution of coverage and magnetization metrics across rounds, and which archetypes are likely to be recovered based on their exposure history. By mathematically grounding a heuristic pipeline in rigorous random matrix theory, the spectral framework transforms federated Hebbian learning from an empirically motivated procedure into a principled, analyzable algorithm whose behavior can be predicted, optimized, and trusted in practical deployments.
+% % In this section we formalize the round-wise federated setting in single mode and develop a spectral theory that explains, in a principled and practically actionable way, why and when archetypal structure becomes visible in the server-side estimator. At each communication round ($t$), the server observes only contemporaneous samples, aggregated across clients with heterogeneous class coverage, and constructs an unsupervised Hebbian estimator ($J_{\mathrm{unsup}}^{(t)}$). The population counterpart of this matrix decomposes into isotropic noise plus a finite-rank signal aligned with the archetypes; more precisely, ($\mathbb{E}[J_{\mathrm{unsup}}^{(t)}]=\sigma^2 I + \frac{r_{\mathrm{ex}}^2}{N}\sum_{\mu=1}^K \alpha_\mu^{(t)},\xi_\mu \xi_\mu^\top$), where the coefficients ($\alpha_\mu^{(t)}$) are proportional to the round-wise exposure, i.e., to the probability that class ($\mu$) is selected across clients at time ($t$). This spiked-Wishart structure provides the conceptual bridge between federated sampling and spectral detectability: exposure drives spike strength, and spike strength governs whether the corresponding eigenvalue separates from the Marchenko–Pastur bulk and the associated eigenvector aligns with the ground-truth archetype.
+
+% % The concentration result in operator norm (Theorem ???) is the foundational probabilistic statement that licenses all subsequent spectral decisions. It shows that ($J_{\mathrm{unsup}}^{(t)}$) remains within a thin operator-norm neighborhood of its expectation with overwhelmingly high probability, with a deviation exponent linear in the effective sample size of the round. In the single-round regime with aspect ratio ($q=N/M_c$) fixed, this translates into an exponential tail in ($N$), ensuring that bulk edges predicted by the population model are not washed out by sampling noise. A bounded-variable specialization further improves constants without changing the qualitative message. 
+
+% %Parte successiva
+% %Building on this stability, the spectral localization theorem (Theorem B.2) situates the empirical spectrum relative to the Marchenko–Pastur law: the non-informative eigenvalues are confined near ($[\lambda_-(q),\lambda_+(q)]$) up to vanishing fluctuations, while each class ($\mu$) whose exposure-driven amplitude exceeds the detectability threshold ($\frac{r_{\mathrm{ex}}^2\alpha_\mu^{(t)}}{\sigma^2}>\sqrt{q}$) produces an eigenvalue strictly beyond ($\lambda_+(q)$) with an eigenvector that is asymptotically aligned with ($\xi_\mu$). In practical terms, this theorem justifies counting informative directions via a bulk-edge test and explains the empirical rise of ($K_{\mathrm{eff}}(t)$) as exposure accumulates across rounds or concentrates on specific classes.
+
+% % \textcolor{red}{I due paragrafi successivi sono da rivedere e da unire al pippone di dopo.}
+% % The pseudo-inverse propagation map ($J\mapsto J+\alpha(J-J^2)$) acts as a nonlinear spectral sharpening that is benign for the bulk yet rapidly saturating for genuine spikes. A precise eigenvalue-level analysis shows that informative eigenvalues are driven quickly toward one, while bulk eigenvalues drift upward much more slowly; a small, finite number of propagation steps therefore amplifies the separation and renders a simple hard threshold ($\tau$) highly effective. This mechanism clarifies why the disentangling stage, seeded from the post-propagation leading subspace, can recover archetypes reliably: the initialization inherits alignment from separated spikes, and pruning removes near-duplicates that would otherwise arise from finite-sample variability. The federated imbalance functional, which quantifies heterogeneity in the round-wise mixing distribution, yields a lower bound on the number of detectable spikes and makes explicit how coverage design across clients influences spectral visibility; in particular, more balanced exposure raises the floor of ($K_{\mathrm{eff}}(t)$), whereas strongly uneven coverage delays the emergence of under-represented archetypes. Complementing these static insights, a round-to-round stability result bounds the variance of ($K_{\mathrm{eff}}(t)$) in single mode, showing that temporal fluctuations decay at the expected ($M_c^{-1/2}$) rate and thereby legitimizing seed-averaged trends in empirical plots.
+
+% % Taken together, these statements give a unified narrative that connects sampling, spectrum, and retrieval. The exposure parameters determine spike amplitudes in the population model; concentration guarantees that the empirical estimator is close enough to inherit the population geometry; bulk-edge localization and detectability specify which directions can be trusted as signal at finite sample sizes; propagation turns marginal separations into robust gaps suitable for hard spectral cuts; disentangling uses the purified subspace to produce archetype estimates; and the full pipeline is reflected in the standard diagnostics: the Frobenius error decreases as the estimator approaches its ideal limit, ($K_{\mathrm{eff}}$) increases when more archetypes become spectrally visible, coverage records which classes are even present in the round, and Hopfield magnetization improves precisely for those archetypes with larger spectral mass, i.e., higher exposure. The finite-($N$) refinements and optional local laws close the loop for real-world datasets by stabilizing thresholds near the edge and enabling fine-grained tests when spikes are close to the bulk. In short, the theoretical results are not ancillary: they prescribe how to set thresholds, why propagation helps, when to prefer MP or shuffle baselines, and how to interpret the evolution of all reported metrics, thereby turning a heuristic federated pipeline into a mathematically grounded procedure whose behavior can be predicted and, crucially, trusted.
+
+
+% Sia $\Xi=\{\xi_\mu\}_{\mu=1}^K$ quasi ortogonale $\dfrac{\xi_\mu^\top \xi_\nu}{N}\simeq 0$.
+% Siano $l=1,\dots,L$ client con $S_l\in\{1,\dots,K\}$ non disgiunto.
+% Preso $M_c$ numero di esempi per client/round, per ciascun client $l$ ed indice $i\in\{1,\dots,M_c\}$:
+% \begin{enumerate}
+%     \item estraggo $\mu_i^{(l,t)}$ da $p_l(\mu)$ con supporto $S_l$;
+%     \item genero $\chi_i^{(l,t)}$ tale che $\mathbb{P}(\chi_{i,j}^{(l,t)}=\pm 1)= \dfrac{1+r}{2}$;
+%     \item pongo $\eta_i^{(l,t)}=\chi_i^{(l,t)}\circ \xi_{\mu_i^{(l,t)}}$.
+% \end{enumerate}
+
+% Allora $\mathbb{E}[\eta_i^{(l,t)}|\mu]=r \xi_\mu$ componente per componente.
+% Sia $E_t\in\mathbb{R}^{L\times M_c \times N}$ l'insieme round-wise usato per stimare
+% \begin{equation}
+%     J^{(t)}_{\textrm{unsup}}= \dfrac{1}{L} \sum_{l=1}^L \dfrac{1}{N M_c} \eta_t^\top [l] \eta_t [l].
+% \end{equation}
+% Considero la distribuzione globale sugli archetipi al round t:
+% \begin{equation}
+%     \pi^{(t)} (\mu) = \dfrac{1}{L} \sum_l p_l(\mu),
+% \end{equation}
+% la exposure dell'archetipo $\mu$ sarà definita come
+% \begin{equation}
+%     e_\mu^{(t)} = \sum_{l=1}^{L} \sum_{i=1}^{M_c} \bm 1\{\mu_i^{(l,t)}=\mu\},
+% \end{equation}
+% con $\mathbb{E}[e_\mu^{(t)}]= L \times M_c \times \pi^{(t)}(\mu)$,
+% mentre definiamo la coverage come
+% \begin{equation}
+%     \textrm{cov}(t)=\dfrac{1}{K}  \left | \{ \mu: e_\mu^{(t)}>0 \}\right |.
+% \end{equation}
+
+% \begin{lemma}[Decomposizione spiked-Wishart]
+%     Con la generazione dei dati appena esposta, definita $\sigma^2=1-r^2$, allora vale la seguente decomposizione spiked-Wishart:
+%     \begin{equation}
+%         \mathbb{E}[J_{\textrm{unsup}}^{(t)}] = \sigma^2I + \dfrac{r^2}{N}\sum_\mu \alpha_\mu^{(t)} \xi_\mu \xi_\mu^\top,
+%     \end{equation}
+%     con $\alpha_\mu^{(t)}\propto \pi^{(t)}(\mu)$.
+% \end{lemma}
+% \begin{proof}
+%     Completata. Confidente al 100\% sulla correttezza.
+% \end{proof}
+
+% Ora vorrei provare un teorema di concentrazione non-asintotica in norma operatoriale, per dimostrare che l'edge del bulk resta stabile, con alta probabilità, al crescere di $N$.
+
+% In tal modo vado a dire che, anche con informazione frammentata su più client, la matrice che riassume le statistiche globali si concentra molto sul suo valore "vero"; quando aggrego su più contributi ottengo una stima affidabile del segnale sottostante.
+
+% Vado quindi a dimostrare che $||J_{\textrm{unsup}}^{(t)}- \mathbb{E}[J_{\textrm{unsup}}^{(t)}]||_{\textrm{op}}$ è concentrata esponenzialmente.
+% Dunque, in questo modo:
+% \begin{itemize}
+%     \item gli autovalori di $J_{\textrm{unsup}}^{(t)}$ non saltano randomicamente ma restano vicini ai valori teorici;
+%     \item se teoricamente un archetipo è visibile ($spike>thr.$) lo sarà anche empiricamente;
+%     \item (vorrei almeno) un bound che vale per N ed $M_c$ finiti.
+% \end{itemize}
+% Tutto questo mi darà la garanzia di robustezza del framework.
+% \textcolor{blue}{TEOREMA 2 dovrà prendere assunta A + assunto A' + corollario 1 (forse anche corollario 2?)}
+% \vspace{3mm}
+% \noindent
+% \textbf{Assunto A}
+
+% \noindent
+% Le coordinate $\chi_j$ sono indipendenti con $\|\chi_j\|_{\psi_2}\le C$ per una costante $C>0$.
+
+% \vspace{3mm}
+% \noindent
+% \textbf{Assunto A' - (operativo)}
+
+% \noindent
+% $\chi_j\in\{-1,+1\}$ con $\mathbb E[\chi_j]=r_{\rm ex}$ (dunque bounded $\Rightarrow$ sub-gaussian universale).
+
+% \begin{theorem}[Concentrazione]
+% Sotto Assunto A, esiste $c_1>0$ e per ogni $t>0$:
+
+% \begin{equation}
+%     \mathbb{P}\left(\big\|J_{\rm unsup}^{(t)}-\mathbb E[J_{\rm unsup}^{(t)}]\big\|_{\rm op}>t\right)
+% \le
+% 2\exp\left(-\,c_1\,L\,M_c\cdot \min\left\{\frac{t^2}{\sigma^4},\frac{t}{\sigma^2}\right\}\right).
+% \end{equation}
+% \end{theorem}
+% \begin{proof}
+%     Completata. Confidente al 100\% sulla correttezza.
+% \end{proof}
+
+% \begin{corollary}[Versione bounded — Rademacher]
+% Sotto Assunto A', esiste $c_*\ge 1/8$ tale che, per ogni $t>0$,
+
+% \begin{equation}
+%     \mathbb{P}\left(\big\|J_{\rm unsup}^{(t)}-\mathbb E[J_{\rm unsup}^{(t)}]\big\|_{\rm op}>t\right)
+% \le
+% 2\exp\left(-\,c_*\,L\,M_c\cdot \min\left\{\frac{t^2}{\sup_\lambda\lambda(1-\lambda)},\ t\right\}\right),
+% \end{equation}
+% dove $\displaystyle \sup_{\lambda\in{\rm spec}(C)}\lambda(1-\lambda)\le \tfrac14$.
+% \end{corollary}
+% \begin{proof}
+%     Completata. Confidente al 95\% sulla correttezza.
+% \end{proof}
+
+% \begin{corollary}[Finite-$N$ refined bound]
+% Per $N,M_c$ moderati, esiste $C>0$ tale che per ogni $t>0$
+% \begin{equation}
+%     \mathbb{P}\left(\big\|J_{\rm unsup}^{(t)}-\mathbb E[J_{\rm unsup}^{(t)}]\big\|_{\rm op}>t\right)
+% \le
+% 2\exp\left(
+% -\,c_1\,L\,M_c\cdot \min\left\{\frac{t^2}{\sup_\lambda\lambda(1-\lambda)},\ t\right\}
+% + C\log N\right).
+% \end{equation}
+% \end{corollary}
+% \begin{proof}
+%     Completata. Confidente al 100\% sulla correttezza. In effetti era un semplice corollario, dimostrabile sempre con le Bernstein inequalities. %Da ricopiare negli appunti
+% \end{proof}
+
+% % \begin{corollary}[Local eigenvalue law]
+% % Per ogni $\alpha\in(\lambda_-,\lambda_+)$ e finestra $I=[\alpha-\eta,\alpha+\eta]$ con $\eta\gg N^{-1}$,
+
+% % \begin{equation}
+% %     \left|\frac{\#\{\lambda_i(J_{\rm unsup}^{(t)})\in I\}}{N}-\int_I\rho_{MP}(\lambda)\,d\lambda\right|
+% % \le \frac{C\log N}{\eta N}
+% % \quad\text{w.h.p.}
+% % \end{equation}
+% % \end{corollary}
+% % \begin{proof}
+% %     Non dimostrato. Fiducia nella fattibilità 0/5, utile per test microscopici vicino a $\lambda_+$
+% % \end{proof}
+
+
+
+% \noindent
+% % In this work we develop and deploy a rigorous spectral framework for federated Hebbian learning in the single–round regime, where each client contributes data aligned with a subset of archetypal directions and the server aggregates a covariance–type estimator that is later used within a Hopfield dynamics. 
+
+% % The central mathematical objects are the sample covariance $S_0=\frac{1}{m}ZZ^\top$ of whitened client features and its Hebbian deformation $J=\Sigma^{1/2}S_0\Sigma^{1/2}$, where $\Sigma$ encodes the archetypal population structure through a finite–rank spike. 
+
+% % The main results proved in this part provide a coherent pathway from first principles to actionable criteria: a Marchenko–Pastur universality and isotropic local law for $S_0$; a decoupling lemma showing that, when restricted to the archetypal span, the resolvent is asymptotically scalar; and a complete bulk–plus–spike localization theory that yields the outlier eigenvalues and eigenvector alignment, including their non–asymptotic stability. 
+
+% % Conceptually, the universality and local law justify replacing the noisy sample resolvent by its deterministic MP counterpart uniformly away from the spectral edge, which reduces the multi–archetype interaction to a scalar self–consistent equation. This reduction is the mathematical engine behind the explicit outlier formula $\lambda_{\mathrm{out}}(\kappa)=\sigma^2(1+\kappa)(1+q/\kappa)$, the Baik–Ben Arous–Péché detectability threshold $\kappa>\sqrt{q}$, and the asymptotic overlap $|\langle v,u\rangle|^2=\frac{1-q/\kappa^2}{1+q/\kappa}$. 
+
+% % In plain terms, exposure in the federation—how often an archetype is seen across clients—directly controls a signal–to–noise parameter $\kappa$; when exposure is below the critical level no server–side spectrum can reliably separate the corresponding direction from high–dimensional noise, whereas above the threshold one observes a clean spectral spike whose eigenvector aligns with the archetype. 
+
+% % The concentration inequality in operator norm complements this picture by quantifying the finite–sample fluctuations of the estimator and by providing explicit, probability–level corrections to the asymptotic thresholds. These pieces fit together to produce practical diagnostics and estimators that we use throughout the experiments. 
+
+% % The MP local law, uniform on any fixed collection of directions, underwrites the decoupling step needed to compute server–side resolvents and to control the round–to–round variability of $K_{\mathrm{eff}}$, the effective number of recoverable archetypes. The bulk confinement establishes that, modulo at most $K$ outliers, the server spectrum remains in the MP interval, enabling a principled choice of data–driven thresholds for counting spikes that is robust across heterogeneous client coverages. 
+
+% % The closed–form outlier location and eigenvector alignment then translate directly into interpretable learning curves: as exposure grows, spikes emerge and move away from the edge, the alignment increases, and the subsequent Hopfield retrieval—initialized with corrupted inputs—improves precisely along those archetypes that have been most frequently observed. 
+
+% % From a methodological standpoint, the theory supplies two concrete uses. First, it yields a master generalization metric by comparing, in Frobenius norm, the server Hebbian matrix to the population counterpart: the local law bounds the stochastic error, while the spike formulas quantify the systematic bias due to heterogeneous exposure and partial overlap among clients. Second, it delivers finite–$N$ decision rules for model selection and sensitivity analysis: one can forecast detectability as a function of sample size, noise level $\sigma^2$, federation imbalance, and archetype overlap, and one can separate failure modes due to insufficient exposure from those caused by near–orthogonality violations. 
+
+% % The same spectral toolkit scales seamlessly from synthetic, unstructured data to structured vision datasets such as MNIST: in the latter, client–wise digit partitions induce archetypal spikes whose presence or absence in the aggregated spectrum certifies whether the federated aggregation has succeeded at synthesizing a global associative memory. 
+
+% % Altogether, the results establish a mathematically controlled bridge between random matrix theory and federated representation learning: they explain when and why aggregation should generalize across partially overlapping client archetypes, they quantify the limits of detectability under realistic finite–sample constraints, and they provide transparent, parameter–explicit prescriptions that guide both experimental design and the interpretation of retrieval outcomes.
+
+% \textcolor{red}{Mancano delle definizioni, che aggiungerò in seguito}
+% \begin{itemize}
+%     \item $S_0=\frac{1}{m}ZZ^\top$ (whitened), $G(z)=(S_0-zI)^{-1}$.
+%     \item $\lambda_\pm(q)=\sigma^2(1\pm\sqrt q)^2$.
+%     \item $\rho_{MP}$, $m_{MP}(z)$: legge/trasformata di MP$(q)$.
+%     \item $\varepsilon_{\rm orth}:=\max_{\mu\neq\nu}|\langle u_\mu,u_\nu\rangle|$.
+% \end{itemize}
+
+
+% \begin{theorem}
+% Sia $C=\sigma^2 I+\sum_{\mu=1}^K \theta_\mu u_\mu u_\mu^\top$ e $\bar B=N C$. Sia $q=N/m$. Per ogni $\delta\in(0,1)$ esiste $\varepsilon_N(\delta)\downarrow 0$ tale che, con probabilità $\ge 1-\delta$:
+
+% \begin{enumerate}
+
+% \item \textbf{Bulk confinement}: Tutti gli autovalori di $J$ eccetto al più $K$ appartengono a
+
+% \begin{equation}
+%     \big[\lambda_-(q)-\varepsilon_N(\delta),\ \lambda_+(q)+\varepsilon_N(\delta)\big].
+% \end{equation}
+
+% Una scelta valida è
+
+% \begin{equation}
+%     \varepsilon_N(\delta)= C\sqrt{\tfrac{\log(1/\delta)+\log N}{m}}\ +\ \tfrac{C'\log^2 N}{N^{2/3}}.
+% \end{equation}
+
+
+% \item \textbf{Spike detection, soglia BBP} Per ogni $\mu$: se $\kappa_\mu>\sqrt q$, esiste un outlier $\lambda_\mu(J)>\lambda_+(q)$; se $\kappa_\mu\le\sqrt q$, non emerge alcun outlier attribuibile a $\mu$.
+
+% \item \textbf{Posizione outlier, caso decoupled} Se i $\{u_\mu\}$ sono ortonormali (o $\varepsilon_{\rm orth}$-ortonormali con correzioni $O(\varepsilon_{\rm orth})$), la posizione asintotica è
+
+% \begin{equation}
+%     \lambda_{\rm out}(\kappa)\ =\ \sigma^2\,(1+\kappa)\,\Big(1+\tfrac{q}{\kappa}\Big),
+% \qquad \kappa>0,
+% \end{equation}
+
+% e $\lambda_{\rm out}(\kappa)>\lambda_+(q)\ \Leftrightarrow\ \kappa>\sqrt q$.
+
+% \item \textbf{Allineamento autovettoriale} Per $\kappa_\mu>\sqrt q$, l’autovettore $v_\mu$ dell’outlier soddisfa
+
+% \begin{equation}
+%     |\langle v_\mu,u_\mu\rangle|^2\ \xrightarrow{\mathbb P}\ 
+% \gamma(\kappa_\mu,q)\ :=\ \frac{1-\frac{q}{\kappa_\mu^2}}{1+\frac{q}{\kappa_\mu}} \in (0,1),
+% \end{equation}
+
+% con correzioni $O(\varepsilon_{\rm orth}+N^{-1/2})$ nel caso non esattamente ortogonale.
+
+% \item \textbf{Soglia finita-$N$} Per probabilità $\ge 1-\delta$, la condizione sufficiente di rivelazione:
+% \begin{equation}
+%     \kappa_\mu\ >\ \sqrt q\ +\ C\sqrt{\tfrac{\log(1/\delta)}{N}}\ +\ \tfrac{C'K}{N}\ +\ C''\,\varepsilon_{\rm orth}
+% \ \Longrightarrow\ \lambda_\mu(J)\ \ge\ \lambda_+(q)+c\big(\kappa_\mu-\sqrt q\big).
+% \end{equation}
+% \end{enumerate}
+
+% \end{theorem}
+% \begin{proof}
+%     Completati i primi 4 punti. Confidente al 95\% sui punti completati. Fattibilità del quinto punto 3/5.
+% \end{proof}
+
+% \begin{theorem}[MP universality + isotropic local law]
+% Sia $S_0=\frac1m ZZ^\top$ con righe indipendenti, $\mathbb E[Z_k]=0$, $\mathbb E[Z_kZ_k^\top]=I$, e coordinate bounded/subgaussian (Lindeberg). Per $\delta\in(0,1)$,
+
+% \begin{equation}
+%     \sup_{z\in\mathcal D_\delta}\ \max_{a,b\in\mathcal V}
+% \ \big|\,a^\top (S_0-zI)^{-1} b\ -\ m_{MP}(z)\,\langle a,b\rangle\,\big|
+% \ \le\ C(\delta,q)\sqrt{\tfrac{\log N}{N}}
+% \end{equation}
+% con probabilità $1-N^{-D}$ per ogni $D>0$, uniformemente su qualsiasi insieme finito $\mathcal V\subset\mathbb S^{N-1}$ di cardinalità $|\mathcal V|\le N^{C_0}$ (o $\le e^{C_0K}$ con $K=O(1)$). In particolare, $\big|\tfrac1N\operatorname{Tr}(S_0-zI)^{-1}-m_{MP}(z)\big|\le C\sqrt{\log N/N}$.
+% \end{theorem}
+% \begin{proof}
+%     Completata. Confidente al 95\%.
+% \end{proof}
+% \textcolor{blue}{Da qua in poi tutto in appendice}
+% \begin{lemma}[Decoupling condition]
+%     Con le ipotesi del Teo. precedente e $U=[u_1,\dots,u_K]$, $K=O(1)$, sia
+
+% \begin{equation}
+%     M(z):=U^\top (S_0-zI)^{-1} U\in\mathbb R^{K\times K},\qquad
+% \varepsilon_{\rm orth}:=\max_{\mu\neq\nu}|\langle u_\mu,u_\nu\rangle|.
+% \end{equation}
+% Allora, per ogni $\delta>0$ e $z\in\mathcal D_\delta$,
+% \begin{equation}
+%     \big\|\,M(z)-m_{MP}(z)\,I_K\,\big\|_{\rm op}
+% \ \le\ C_0(\delta,q,\kappa(U))\,\varepsilon_{\rm orth}\ +\ C_1(\delta,q)\,\sqrt{\tfrac{K\log N}{N}}
+% \end{equation}
+% con probabilità $1-N^{-D}$ per ogni $D>0$, dove $\kappa(U)=\|U^\top U\|_{\rm op}/\sigma_{\min}(U^\top U)$.
+% \end{lemma}
+% \begin{proof}
+%     Completata. Confidente al 100\%.
+% \end{proof}
+
+% \begin{corollary}
+%     Quasi certamente, $M(z)=m_{MP}(z) + I_K + \Delta(z)$, con $ \left\| \Delta(z)\right\|_\textrm{op}\leq C \varepsilon_\textrm{orth} + O\left(\dfrac{1}{N}\right)$.
+% \end{corollary}
+% \begin{proof}
+%     Completata. Confidente al 100\%.
+% \end{proof}
+
+% \begin{lemma}[Equazione secolare scalare]
+% Se $M(z)=m_{MP}(z)I_K+o(1)$ in norma operatore, allora gli outlier di $J=\Sigma^{1/2}S_0\Sigma^{1/2}$ sono (asintoticamente) le soluzioni $z>\,(1+\sqrt q)^2$ di
+
+% \begin{equation}
+%     1\ -\ z\,\frac{\kappa_\mu}{1+\kappa_\mu}\,m_{MP}(z)\ =\ 0,
+% \qquad \mu=1,\dots,K,
+% \end{equation}
+% che equivalgono alla formula chiusa $\lambda_{\rm out}(\kappa)=\sigma^2(1+\kappa)(1+q/\kappa)$.
+% \end{lemma}
+% \begin{proof}
+%     Completata. Confidente al 100\%.
+% \end{proof}
+
+
+% \begin{lemma}[Overlap autovettoriale]
+% Se $\kappa_\mu>\sqrt q$ e $\varepsilon_{\rm orth}\to 0$, l’autovettore $v_\mu$ dell’outlier soddisfa
+
+% \begin{equation}
+%     |\langle v_\mu,u_\mu\rangle|^2\ \xrightarrow{\mathbb P}\ 
+% \gamma(\kappa_\mu,q)\ :=\ \frac{1-\frac{q}{\kappa_\mu^2}}{1+\frac{q}{\kappa_\mu}}\ ,
+% \end{equation}
+% con errore $O(\varepsilon_{\rm orth}+N^{-1/2})$ a $N$ grande.
+% \end{lemma}
+% \begin{proof}
+%     Completata. Confidente al 100\%.
+% \end{proof}
+
+
+
+% \subsection{Theoretical guarantees: coverage}\label{subsec:coverage}
+% We formalize a nonasymptotic \emph{coverage} guarantee for the spectral initialization used in the pipeline: with a modest number of randomized sign–mixed candidates, each ground–truth archetype is hit by at least one initializer with uniformly positive magnetization. The focus here is the seeding step; ascent properties of TAM and recovery after pruning are deferred to the appendix.
+
+% \vspace{3mm}
+% \noindent
+% Let $J:=J^{(t)}_{\mathrm{KS}}=J^\star+E\in\mathbb{R}^{N\times N}$ be symmetric psd with $\mathrm{spec}(J)\subset[0,1]$ (after sharpening/thresholding). The ideal memory $J^\star\succeq0$ has rank $K$ and spectral gap $\Delta:=\lambda_K(J^\star)>0$. Writing $\widehat{\mathcal U}$ and $\mathcal U^\star$ for the top-$K$ eigenspaces of $J$ and $J^\star$, the Davis–Kahan deviation satisfies
+% \begin{equation}\label{eq:ga-dk}
+% \eta\;:=\;\|\sin\Theta(\widehat{\mathcal U},\mathcal U^\star)\|_{\mathrm{op}}
+% \ \le\ c_{\mathrm{DK}}\frac{\|E\|_{\mathrm{op}}}{\Delta}\ <\ 1.
+% \end{equation}
+% Let $\Xi^\star=\{\xi^\mu\}_{\mu=1}^K\subset\{\pm1\}^N$ and $u_\mu:=\xi^\mu/\sqrt N$. Let $V\in\mathbb{R}^{N\times K}$ be an orthonormal basis of $\widehat{\mathcal U}$, satisfying the standard incoherence condition
+% \begin{equation}\label{eq:ga-incoh}
+% \max_{i\le N}\ \|V_{i:}\|^2\ \le\ \mu_0\,\frac{K}{N},\qquad
+% \frac1N\sum_{i=1}^N\|V_{i:}\|^2=\frac{K}{N},
+% \end{equation}
+% for some $\mu_0\in[1,N/K]$. Randomized sign–mixing draws $w^{(j)}\sim\mathcal N(0,I_K)$, sets $\omega^{(j)}=w^{(j)}/\|w^{(j)}\|\in\mathbb S^{K-1}$, and defines initializers
+% \begin{equation}\label{eq:ga-init}
+% \sigma^{(0)}_j\;=\;\mathrm{sign}\big(V\,w^{(j)}\big)\in\{\pm1\}^N,\qquad j=1,\dots,s.
+% \end{equation}
+% Write $p_\mu:=P_{\widehat{\mathcal U}}u_\mu/\|P_{\widehat{\mathcal U}}u_\mu\|\in\mathbb S^{K-1}$ and spherical caps $\mathcal B_\mu(\theta):=\{\omega:\angle(\omega,p_\mu)\le\theta\}$ with volume fraction $\pi_\star(\theta):=\mathrm{Vol}(\mathcal B_\mu(\theta))/\mathrm{Vol}(\mathbb S^{K-1})$ (independent of $\mu$ by symmetry).
+
+% \begin{lemma}[Spectral subspace accuracy]\label{lem:subspace-accuracy}
+% Under \eqref{eq:ga-dk}, one has $\|P_{\widehat{\mathcal U}}u_\mu\|\ge\sqrt{1-\eta^2}$ and
+% \(
+% \max_{\mu\neq\nu}|p_\mu^\top p_\nu|\ \le\ \delta_0,
+% \)
+% with $\delta_0=O(\eta+N^{-1/2})$. Let $\phi_\star:=\arccos(\delta_0)\in(0,\tfrac{\pi}{2})$.
+% \end{lemma}
+
+% \begin{lemma}[Minimum overlap at initialization]\label{lem:min-overlap}
+% Fix $\tau_{\mathrm{inc}}\in\big(0,\min\{\mu_0,1\}\big)$ and $\theta\le \min\{\phi_\star/2,\ \arctan\sqrt{\tau_{\mathrm{inc}}/\mu_0}\}$. If $\omega\in\mathcal B_\mu(\theta)$ and $\sigma^{(0)}=\mathrm{sign}(Vw)$ with $w=\rho\,\omega$, then the magnetization satisfies
+% \begin{equation}\label{eq:min-overlap}
+% m\left(\sigma^{(0)},\xi^\mu\right)
+% :=\frac1N\,\langle \sigma^{(0)},\xi^\mu\rangle
+% \ \ge\ m_0(\mu_0,\tau_{\mathrm{inc}})
+% :=\frac{2-\mu_0-\tau_{\mathrm{inc}}}{\mu_0-\tau_{\mathrm{inc}}}\ \in(0,1).
+% \end{equation}
+% \end{lemma}
+
+% \begin{lemma}[Spherical–cap coverage]\label{lem:sph-cap-coverage}
+% For each $\mu$, $\mathbb P\big(\omega\in\mathcal B_\mu(\theta)\big)=\pi_\star(\theta)$. If 
+% \begin{equation}\label{eq:samples-for-coverage}
+% s\ \ge\ c_1\,\frac{K\log(K/\eta)}{\pi_\star(\theta)},
+% \end{equation}
+% then with probability at least $1-\eta$ every class $\mu$ admits some initializer $\sigma^{(0)}$ with $m(\sigma^{(0)},\xi^\mu)\ge m_0(\mu_0,\tau_{\mathrm{inc}})$.
+% \end{lemma}
+
+% \begin{corollary}[Initial coverage]\label{cor:initial-coverage}
+% Under Lemmas~\ref{lem:subspace-accuracy}–\ref{lem:sph-cap-coverage}, with probability $\ge 1-\eta$ one has
+% \(
+% \forall\mu\ \exists j\le s:\ m(\sigma^{(0)}_j,\xi^\mu)\ \ge\ m_0(\mu_0,\tau_{\mathrm{inc}}).
+% \)
+% \end{corollary}
+
+% \noindent
+% The energy view of TAM, monotone ascent (asynchronous, block, and CCCP surrogates), stability of maximizers, persistence under perturbations, and the end–to–end recovery theorem chaining spectral init \(\rightarrow\) TAM \(\rightarrow\) pruning are stated and proved in the appendix (App.~\ref{app:tam-details}; cf. Thm.~\ref{thm:tam-ascent}, Thm.~\ref{thm:block-convergence}, Thm.~\ref{thm:cccp}, Thm.~\ref{thm:persistence}, Cor.~\ref{cor:sign-quantization-overlap}, Thm.~\ref{thm:recovery}).
