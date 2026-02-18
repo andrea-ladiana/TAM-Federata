@@ -131,7 +131,7 @@ We cast aggregation as a low-rank-plus-noise spectral inference problem, derivin
 \label{sec:introduction}
 
 Federated Learning (FL) enables collaborative learning across multiple data owners without centralizing raw data, by iterating local updates and server-side aggregation.
-This paradigm is attractive in privacy- and governance-constrained domains, but it is notoriously challenged by \emph{statistical heterogeneity}: client data can be reasonably modeled as independent accroos clients but, within a client, they are often scarce and unbalanced.
+This paradigm is attractive in privacy- and governance-constrained domains, but it is notoriously challenged by \emph{statistical heterogeneity}: client data can be reasonably modeled as independent across clients but, within a client, they are often scarce and unbalanced.
 Such heterogeneity may induce biased or high-variance updates, slows convergence, and can yield unstable global models \citep{mcmahan2017fedavg,kairouz2021advances,hsu2019measuring,li2020fedprox}.
 These issues are exacerbated in streaming or open-world settings, where new patterns appear over time and forgetting becomes a primary failure mode.
 
@@ -467,24 +467,20 @@ From now on, we drop the superscript ``Hebb'' and denote the Hebbian synaptic ma
 \subsection{Dataset partition and round definition}
 \label{subsec:dataset_partition}
 
-To fully specify the federated learning setting, we consider $L$ clients and a federation lasting for $T$ communication rounds. In order to test the robustness of our algorithm under strong heterogeneity, we assume that each client $c$ is exposed, throughout the whole federation, only to a subset of archetypes indexed by a set $K_c\subseteq\{1,\dots,K\}$, while the federation as a whole covers the entire latent population: $\bigcup_{c=1}^{L}K_{c} \;=\; \{1, \dots, K\}$\footnote{This union represents the complete latent space. The actual presence of specific archetypes at round $t$ is governed by the time-varying mixtures $\pi_{t,c}(\mu)$, allowing for scenarios where classes emerge mid-training.}.
+To fully specify the federated learning setting, we consider $L$ clients and a federation lasting for $T$ communication rounds. To model robustness under strong heterogeneity, we define $K_c\subseteq\{1,\dots,K\}$ as the \emph{effective support} of archetypes observed by client $c$ over the considered horizon, assuming that the federation as a whole covers the entire latent population: $\bigcup_{c=1}^{L}K_{c} \;=\; \{1, \dots, K\}$\footnote{This union represents the complete latent space. The actual presence of specific archetypes at round $t$ is governed by the time-varying mixtures $\pi_{t,c}(\mu)$, allowing for scenarios where classes emerge mid-training.}.
 
 \paragraph{Local batches and class mixtures.}
-At round $t\in\{1,\dots,T\}$, each client $c\in\{1,\dots,L\}$ receives a local batch of $M_c^{t}$ examples, $\big\{\big(\bm\eta_c^t\big)^{m}\big\}_{m=1}^{M_c^{t}}$, drawn according to the generative model~\eqref{eq:gen}. We denote by $\bm\pi_{t,c}$ the corresponding class-mixing distribution, i.e.\ $\pi_{t,c}(\mu)$ is the probability that an example observed by client $c$ at round $t$ is generated from archetype $\mu$. By construction, this mixture is supported on $K_c$, meaning that
+At round $t\in\{1,\dots,T\}$, each client $c\in\{1,\dots,L\}$ receives a local batch of $M_c^{t}$ examples, $\big\{\big(\bm\eta_c^t\big)^{m}\big\}_{m=1}^{M_c^{t}}$, drawn according to the generative model~\eqref{eq:gen}. We denote by $\bm\pi_{t,c}$ the corresponding class-mixing distribution, i.e.\ $\pi_{t,c}(\mu)$ is the probability that an example observed by client $c$ at round $t$ is generated from archetype $\mu$. Consistent with the definition of $K_c$, this mixture satisfies:
 \begin{equation}
 \pi_{t,c}(\mu)=0
 \qquad
 \forall\, t=1,\dots,T,\ \forall\, \mu\notin K_c.
 \end{equation}
 
-Consequently, different clients may observe different subsets $K_c$ of archetypes and may operate under distinct noise levels $r_c$, so that local datasets reflect only specific facets of the global archetypal population. This induces a rigorous statistically non-i.i.d.\ federated setting \cite{kairouz2021advances,hsu2019measuring}.
-% \FD{Dobbiamo chiarire questo aspetto: stiamo supponendo che ogni cliente può vedere SOLO alcuni archetipi, oppure stiamo supponendo che gli esempi si riferiscono a tutti gli archetipi ma, poiché gli esempi sono distribuiti in modo casuale, alcuni archetipi non sono accessibili ad uno specifico client? Io penso che si considera il secondo caso. Voglio classificare gli esiti di una risonanza nella popolazione, ma alcuni piccoli ospedali potrebbero avere cosi pochi dati da non "vedere" alcune malattie tra i pazienti osservati. Invece, in pratica, il primo caso sarebbe quello in cui NON posso osservare una specifica malattia in un ospedale (Ad esempio, non ho la strumentazione per farlo), mentre la posso osservare altrove.}
-
-% \textcolor{blue}{Va bene mettere questo in footnote magari?}
+Consequently, different clients observe different subsets $K_c$ of archetypes and operate under distinct noise levels $r_c$, so that local datasets reflect only specific facets of the global archetypal population. This induces a rigorous statistically non-i.i.d.\ federated setting \cite{kairouz2021advances,hsu2019measuring}.
 
 \noindent
-% \textcolor{red}
-{It is important to clarify that the condition $\pi_{t,c}(\mu) = 0$ for $\mu \notin K_c$ should be interpreted as a statistical property rather than a structural limitation. We do not assume that client $c$ is fundamentally incapable of observing archetype $\mu$ (e.g., due to sensor blindness), but rather that the local generative process is characterized by high heterogeneity and sparsity, effectively rendering specific classes absent from the local sampling budget at round $t$. This perspective aligns with realistic non-i.i.d. federated scenarios, such as small local datasets or regional prevalence variations, and naturally accommodates the emergence of novel archetypes as the mixture distributions evolve over time.}
+It is important to clarify that the condition $\pi_{t,c}(\mu) = 0$ for $\mu \notin K_c$ describes the \emph{statistical realization} of the local datasets rather than a structural limitation. We do not assume that client $c$ is fundamentally incapable of observing archetype $\mu$ (e.g., due to sensor blindness), but rather that the local generative process is characterized by high heterogeneity and sparsity, effectively rendering specific classes absent from the local sampling budget within the training rounds. This perspective aligns with realistic non-i.i.d. federated scenarios, such as small local datasets or regional prevalence variations, and naturally accommodates the emergence of novel archetypes as the mixture distributions evolve over time.
 
 
 
@@ -514,7 +510,7 @@ e_\mu(t)
 \frac{1}{L}\sum_{c=1}^L\frac{1}{M_c^t}\sum_{m=1}^{M_c^t}
 \mathbf{1}\!\left\{\big(\bm\eta_c^t\big)^{m}\ \text{was generated from archetype }\mu\right\}.
 \end{equation}
-In words, $e_\mu(t)$ measures, on average across clients, the fraction of local examples at round $t$ that originate from archetype $\boldsymbol{\xi}^\mu$.
+In words, $e_\mu(t)$ is the empirical realization of the global mixture probability $\pi_t(\mu)$; it measures, on average across clients, the fraction of local examples at round $t$ that originate from archetype $\boldsymbol{\xi}^\mu$. By the law of large numbers, $e_\mu(t) \to \pi_t(\mu)$ as the batch sizes $M_c^t \to \infty$.
 
 The second quantity is the \emph{coverage} up to round $t$:
 \begin{equation}
@@ -670,23 +666,34 @@ Our answer is spectral. We show that the \emph{population} operator associated w
 \vspace{3mm}
 \noindent
 \paragraph{Spiked decomposition and the meaning of exposure.}
-With the data model of Subsec.~\ref{subsec:dataset_partition}, let $\sigma^2:=1-r^2$ denote the (per-coordinate) noise variance. The population counterpart of the round-wise server estimator decomposes into an isotropic noise part plus a finite-rank signal aligned with the true archetypes:
+With the data model of Subsec.~\ref{subsec:dataset_partition}, let $\sigma^2$ denote the (per-coordinate) noise variance.
+In the Rademacher channel, this is given by the identity $\sigma^2=1-r^2$, where for simplicity we set $r_c = r$ for all $c \in \{1, \dots, L\}$.
+To apply standard random matrix results, we analyze the spectrum of the \emph{rescaled} operator $\tilde{\bm{J}}_s^{(t)} := N \bm{J}_s^{(t)}$.
+The population counterpart of this rescaled estimator decomposes into an isotropic noise part plus a finite-rank signal aligned with the true archetypes.
+Letting $u_\mu := \bm{\xi}^\mu/\sqrt{N}$ denote the normalized archetype vectors, we have:
 \begin{equation}\label{eq:spiked-decomp}
-\mathbb{E}[\bm{J}_s^{(t)}]\;=\;\sigma^2 \bm{I}\;+\;\frac{r^2}{N}\sum_{\mu=1}^K \alpha_\mu^{(t)}\,\bm{\xi}^\mu(\bm{\xi}^\mu)^\top,
-\qquad \alpha_\mu^{(t)}\ \propto\ \pi_t(\mu).
+\mathbb{E}[\tilde{\bm{J}}_s^{(t)}]\;=\;\sigma^2 \bm{I}\;+\;r^2\sum_{\mu=1}^K \pi_t(\mu)\,u_\mu u_\mu^\top.
 \end{equation}
-The identity term $\sigma^2\bm I$ captures the isotropic contribution of random bit flips, while each archetype $\bm\xi^\mu$ contributes a rank-one projector weighted by $\alpha_\mu^{(t)}$. Crucially, $\alpha_\mu^{(t)}$ is proportional to the round-level mixture mass $\pi_t(\mu)$ in~\eqref{eq:global_mixture_round}, hence it acts as an \emph{effective spike strength}. Intuitively, an archetype is invisible when it has (near-)zero exposure, and it becomes detectable only once its exposure makes the corresponding spike strong enough to separate from the noise bulk.
+The identity term $\sigma^2\bm I$ captures the isotropic contribution of random bit flips, while each archetype contributes a rank-one projector $u_\mu u_\mu^\top$ weighted by the global mixture mass $\pi_t(\mu)$ and signal intensity $r^2$.
+Consequently, strictly identifying the spike strength in the spiked-covariance model yields:
+\begin{equation}
+\label{eq:spike_strength_def}
+\text{Spike strength of }\mu: \quad \theta_\mu^{(t)} = r^2\,\pi_t(\mu) 
+\quad\Longrightarrow\quad
+\kappa_\mu^{(t)} = \frac{r^2\,\pi_t(\mu)}{\sigma^2} = \frac{r^2\,\pi_t(\mu)}{1-r^2}.
+\end{equation}
+Intuitively, an archetype is invisible when it has (near-)zero exposure, and it becomes detectable only once its exposure makes the corresponding spike strong enough to separate from the noise bulk.
 
 The remaining task is to turn this intuition into a finite-sample statement: (a) show that $\bm J_s^{(t)}$ stays close to its expectation in operator norm at the relevant scales, and (b) characterize when the spikes of~\eqref{eq:spiked-decomp} produce outliers and aligned eigenvectors in the empirical spectrum.
 
 \vspace{3mm}
 \noindent
 \paragraph{Non-asymptotic stability of the round operator.}
-We first collect concentration bounds ensuring that $\bm J_s^{(t)}$ is a small perturbation of its spiked population counterpart. Throughout, $\|\cdot\|_{\mathrm{op}}$ denotes operator norm, $M_{\mathrm{round}}=L\,M_c$, and $\sigma^2$ is as above.
+We first collect concentration bounds ensuring that $\bm J_s^{(t)}$ is a small perturbation of its spiked population counterpart. Throughout, $\|\cdot\|_{\mathrm{op}}$ denotes operator norm, $M_{\mathrm{round}}=L\,M_c$\footnote{While the general framework allows for time-varying and heterogeneous budgets $M_c^t$ per client, for the sake of theoretical clarity we conduct the concentration analysis assuming a representative balanced round where $M_c^t \equiv M_c$. In this simplified setting, $M_{\mathrm{round}} = L M_c$ acts as the effective aggregate sample volume; the results extend naturally to the general case by replacing $M_{\mathrm{round}}$ with the total round-level budget $M_{\mathrm{round}}(t) = \sum_{c=1}^L M_c^t$.}, and $\sigma^2$ is as above.
 
 \begin{theorem}[Concentration]\label{thm:concentration}
 \leavevmode\par\smallskip\noindent
-Let $(\chi_j)_{j=1}^N$ be independent random variables. For a fixed communication round index $t$, let $\bm{J}_s^{(t)}$ be defined by INSERT EQUATION. Then, for every deviation level $u>0$:
+Let $(\chi_j)_{j=1}^N$ be independent random variables. For a fixed communication round index $t$, let $\bm{J}_s^{(t)}$ be defined by \eqref{eq:server_agg}. Then, for every deviation level $u>0$:
 \begin{enumerate}
 \item[\textnormal{(i)}]\label{thm:concentration:subg} \textbf{(Sub-Gaussian case)} 
 If $\|\chi_j\|_{\psi_2}\le C$ for all $j$, there exists a constant $c_1>0$ (depending only on $C$) such that
@@ -734,14 +741,14 @@ C\;:=\;\sigma^2 I_N + \sum_{\mu=1}^K \theta_\mu\,u_\mu u_\mu^\top,
 \qquad 
 \kappa_\mu:=\frac{\theta_\mu}{\sigma^2},
 \]
-with aspect ratio $q:=N/M_{\mathrm{eff}}$. Denote by
+with aspect ratio $q:=N/M_{\mathrm{round}}$. Denote by
 \(
 \lambda_\pm(q):=\sigma^2(1\pm\sqrt q)^2
 \)
 the Marchenko--Pastur edges (cf.~\eqref{eq:mp-edge}). Let $J$ be the round--$t$ operator, which can be written as
 \[
 J = \Sigma^{1/2} S_0 \Sigma^{1/2},\qquad
-S_0:=\frac{1}{M_{\mathrm{eff}}}\sum_{k=1}^{M_{\mathrm{eff}}} Z_k Z_k^\top,
+S_0:=\frac{1}{M_{\mathrm{round}}}\sum_{k=1}^{M_{\mathrm{round}}} Z_k Z_k^\top,
 \]
 with $\Sigma=C$ and whitened rows $Z_k$ satisfying the standing assumptions under which the isotropic MP local law holds (Theorem~\ref{thm:mp-global-law}). Assume that the number of spikes $K$ is fixed (independent of $N$), that the spike directions $u_\mu$ have unit norm, and that their Gram matrix $\Gamma:=U^\top U$ with $U:=[u_1,\dots,u_K]$ satisfies
 \[
@@ -757,7 +764,7 @@ Assume additionally that the nonzero spike strengths $\{\kappa_\mu\}$ are pairwi
 \end{equation}
 where
 \begin{equation}\label{eq:epsilonN}
-\varepsilon_N(\delta)\;=\;C\sqrt{\frac{\log(1/\delta)+\log N}{M_{\mathrm{eff}}}}\;+\;C'\,\frac{\log^2 N}{N^{2/3}},
+\varepsilon_N(\delta)\;=\;C\sqrt{\frac{\log(1/\delta)+\log N}{M_{\mathrm{round}}}}\;+\;C'\,\frac{\log^2 N}{N^{2/3}},
 \end{equation}
 for universal constants $C,C'>0$ (depending only on $q$ and the tail/regularity parameters).
 
@@ -807,7 +814,7 @@ Borel--Cantelli yields the almost sure convergence $\lambda_\mu(J)\to\lambda_{\m
 :=\frac{1-\dfrac{q}{\kappa_\mu^2}}{1+\dfrac{q}{\kappa_\mu}}
 \in(0,1),
 \end{equation}
-as $N,M_{\mathrm{eff}}\to\infty$ with $N/M_{\mathrm{eff}}\to q$. In the nearly-orthogonal case the same limit holds, with finite-$N$ deviations of order $O(\varepsilon_{\mathrm{orth}}+N^{-1/2})$.
+as $N,M_{\mathrm{round}}\to\infty$ with $N/M_{\mathrm{round}}\to q$. In the nearly-orthogonal case the same limit holds, with finite-$N$ deviations of order $O(\varepsilon_{\mathrm{orth}}+N^{-1/2})$.
 \end{enumerate}
 \end{theorem}
 
@@ -898,9 +905,10 @@ We can now define the adaptive weight by normalizing the observed uncertainty ab
 \label{eq:w_entropy_rule}
 w_c(t)
 \;=\;
-\frac{H_{AB}-H_{\min}(r)}{1-H_{\min}(r)}.
+\max\bigg(0, \ \frac{H_{AB}-H_{\min}(r)}{1-H_{\min}(r)}\bigg).
 \end{equation}
-This mapping ensures $w_c(t)\in[0,1]$ whenever $H_{AB}\in[H_{\min}(r),1]$, and it has the intended qualitative behavior:
+This mapping ensures $w_c(t)\in[0,1]$\footnote{Since finite-size fluctuations may occasionally yield empirical entropies slightly below the theoretical floor, we clip the value to ensuring non-negativity.} %whenever $H_{AB}\in[H_{\min}(r),1]$, 
+and it has the intended qualitative behavior:
 \begin{itemize}
 \item If $H_{AB}\approx H_{\min}(r)$, then the discrepancy between $\bm A$ and $\bm B$ is largely explained by the intrinsic corruption noise, and the rule drives $w_c(t)\approx 0$, favoring stability/consolidation.
 \item If $H_{AB}$ is close to $1$, the current batch correlator becomes nearly random in sign relative to $\bm A$, which we interpret as a strong signal of distributional change; the rule then yields $w_c(t)\approx 1$, increasing plasticity.
@@ -920,15 +928,15 @@ This adaptive behavior is illustrated in the numerical experiments (see Fig.~\re
 \centering
 \includegraphics[width=0.95\textwidth]{figures/panel_client_aware_w.pdf}
 \caption{%
-{Per-client adaptive weight dynamics in federated unsupervised learning with adversarial noise.}
+Per-client adaptive weight dynamics in federated unsupervised learning with adversarial noise.
 %
-{(A)}~Temporal evolution of the adaptive weight $w_c(t)$ (Eq.~\ref{eq:convex_comb}) for good clients (blue, $r=0.9$) and one attacker client receiving pure noise (vermillion dashed, $r=0$).
+{(A)}~Temporal evolution of the adaptive weight $w_c(t)$ (Eq.~\ref{eq:convex_comb}) for good clients (blue, $r=0.9$) and one attacker client receiving pure noise (vermillion dashed, $r\simeq0$).
 %
 The weight update rule is based on normalized sign-agreement between the client's local Hebbian correlator $J^{(t)}_c$ and the server's reconstruction operator from the previous round (Section~\ref{subsec:plasticity_w}).
 %
 Good clients maintain stable non-zero weights ($w_{\mathrm{good}} \approx 0.4$--$0.6$), reflecting high-quality local data.
 %
-The attacker's weight rapidly converges to zero ($w_{\mathrm{att}} \to 0$ within $\sim$10 rounds), effectively down-weighting noisy contributions in the server aggregation.
+The attacker's weight rapidly converges to zero ($w_{\mathrm{att}}  \widetilde{\to} 0$ within $\sim$10 rounds), effectively down-weighting noisy contributions in the server aggregation.
 %
 Shaded regions represent standard error over $S=20$ independent seeds.
 %
@@ -943,7 +951,7 @@ Parameters: $N=1000$ neurons, $K=3$ archetypes, $L=5$ clients (4 good + 1 attack
 
 To validate the per-client adaptive weight mechanism described in Section~\ref{subsec:plasticity_w}, 
 we conducted a federated unsupervised learning experiment in which one client (the \emph{attacker}) 
-receives pure noise ($r=0$), while the remaining clients observe data drawn from the same latent 
+receives pure noise ($r\simeq0$), while the remaining clients observe data drawn from the same latent 
 archetypes at high quality ($r=0.9$).
 %
 Figure~\ref{fig:client_aware_adaptive_weight}A shows the temporal evolution of the adaptive 
@@ -958,7 +966,7 @@ Importantly, this down-weighting of noisy clients preserves server-side reconstr
 (Figure~\ref{fig:client_aware_adaptive_weight}B).
 %
 Despite the presence of one attacker among five clients ($20\%$ contamination), 
-the mean retrieval $\langle m \rangle$ remains above $0.7$ throughout training, indicating that 
+the mean retrieval $\langle m \rangle$ remains above $0.8$ throughout training, indicating that 
 the server's TAM dynamics successfully disentangle the $K=3$ latent 
 archetypes from the aggregated, but adaptively weighted—Hebbian correlators.
 %
@@ -987,11 +995,10 @@ We consider three progressively more challenging regimes: (i) non-stationary \em
     \centering
     \includegraphics[width=1\linewidth]{figures/panel06_merged.png}
     \caption{{Adaptive plasticity resolves the stability--plasticity dilemma under exposure drift.}
-    {(A)} Ground-truth round-level mixture $\pi_t(\mu)$ (cf.~\eqref{eq:global_mixture_round}) in a sequential schedule where archetypes become dominant one after another.
-    {(B)} Adaptive client weight $w_c(t)$ computed from the entropy controller in~\eqref{eq:w_entropy_rule} and smoothed via~\eqref{eq:w_ema}. Peaks align with mixture transitions (novelty/shift), while plateaus yield small $w_c(t)$ (consolidation).
-    {(C)} Memory-driven limit ($w_c(t)\equiv 0$): the operator update ignores new evidence and the system fails to acquire later archetypes ($m_2,m_3\simeq 0$).
-    {(D)} Data-driven limit ($w_c(t)\equiv 1$): the update is overly plastic and magnetizations track the instantaneous mixture, leading to rapid forgetting when exposures decrease.
-    {(E)} Adaptive rule: newly exposed archetypes are acquired while previously consolidated ones remain retrievable, yielding sustained high magnetization across all modes.}
+    $A)$ Ground-truth round-level mixture $\pi_t(\mu)$ (cf.~\eqref{eq:global_mixture_round}) in a sequential schedule where archetypes become dominant one after another. $B)$ Adaptive client weight $w_c(t)$ computed from the entropy controller in~\eqref{eq:w_entropy_rule} and smoothed via~\eqref{eq:w_ema}. Peaks align with mixture transitions (novelty/shift), while plateaus yield small $w_c(t)$ (consolidation).
+    $C)$ Memory-driven limit ($w_c(t)\equiv 0$): the operator update ignores new evidence and the system fails to acquire later archetypes ($m_2,m_3\simeq 0$).
+    $D)$ Data-driven limit ($w_c(t)\equiv 1$): the update is overly plastic and magnetizations track the instantaneous mixture, leading to rapid forgetting when exposures decrease.
+    $E)$ Adaptive rule: newly exposed archetypes are acquired while previously consolidated ones remain retrievable, yielding sustained high magnetization across all modes.}
     \label{fig:adaptive}
 \end{figure}
 
@@ -1025,7 +1032,7 @@ We now intensify non-stationarity by letting new archetypes enter the federation
 \begin{figure}[t!]
     \centering
     \includegraphics[width=1\linewidth]{figures/novelty_detection_panel_v2.png}
-    \caption{{Detecting and integrating novel archetypes in a federated setting.}
+    \caption{Detecting and integrating novel archetypes in a federated setting.
     Setup: $L=3$ clients, $N=400$, $T=24$, example quality $r=0.8$, and $M_c^t$ fixed across rounds. The federation starts with $K_{\mathrm{old}}=3$ archetypes; $K_{\mathrm{new}}=3$ additional archetypes are introduced at $t_{\mathrm{intro}}=12$ via a four-round ramp (vertical dashed line and shaded interval). Curves are averaged over 30 random seeds (shaded regions: standard deviation).
     \textit{(Left)} Effective dimensionality $\hat K(t)$ estimated by eigenvalue thresholding (cf.~\eqref{eq:keff-op}). The system rapidly transitions from $\hat K\simeq 3$ to $\hat K\simeq 6$ within a few rounds after the introduction, indicating low-latency novelty detection.
     \textit{(Center)} Magnetizations (overlaps~\eqref{eq:mag}) for old archetypes (solid) and newly introduced ones (dashed). New archetypes are acquired during/shortly after the ramp, while old archetypes exhibit only a mild transient dip and recover, consistent with targeted (rather than indiscriminate) plasticity.
@@ -1037,7 +1044,127 @@ Figure~\ref{fig:novelty_detection} summarizes the key dynamics. The effective ra
 
 Taken together, these results support the central claim of the paper: the system expands its representational subspace precisely when new directions become informative (exposure-driven detectability), and it does so with limited interference thanks to the stability--plasticity control implemented by $w_c(t)$.
 
+\subsection{Application to structured datasets}
+\label{app:structured}
 
+\begin{figure}[t]
+    \centering
+    % --- PRIMA IMMAGINE ---
+    \begin{subfigure}[b]{0.20\textwidth}
+        \centering
+        % Sostituisci 'immagine1' con il nome del tuo file
+        \includegraphics[width=\textwidth]{figures/007_anchor.png}
+        \caption{Anchor}
+        \label{fig:img1}
+    \end{subfigure}
+    \hfill % Questo comando spinge le immagini ai lati per distanziarle
+    % --- SECONDA IMMAGINE ---
+    \begin{subfigure}[b]{0.20\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/010_bass.png}
+        \caption{Bass}
+        \label{fig:img2}
+    \end{subfigure}
+    \hfill
+    % --- TERZA IMMAGINE ---
+    \begin{subfigure}[b]{0.20\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/005_Motorbikes_16.png}
+        \caption{Motorbike}
+        \label{fig:img3}
+    \end{subfigure}
+    
+    % Didascalia generale per l'intera figura
+    \caption{The $K=3$ archetype utilized in the structured experiment.}
+    \label{fig:tre_immagini}
+\end{figure}
+
+The proposed pipeline was validated on \emph{unstructured}, randomly generated archetypes whose entries are independent and uniformly distributed over $\{-1,+1\}$. A natural question is whether the same federated factorization and reconstruction procedure can handle \emph{structured} patterns, where pixels are spatially organized and the resulting archetypes are mutually correlated.
+
+To investigate this question we select $K=3$ binary silhouettes from the Caltech-101 silhouettes dataset, a collection of $28\times 28$ black-and-white object outlines ($N=HW=784$ pixels). The chosen objects---\emph{anchor}, \emph{motorbike}, and \emph{bass}---are visually distinct yet share the spatial statistics typical of natural images (contiguous regions, similar fill ratios), which induce non-negligible inter-pattern overlaps.
+
+\paragraph{Preprocessing: from silhouettes to decorrelated binary archetypes.}
+We apply a lightweight preprocessing pipeline that converts the raw silhouettes into patterns compatible with the framework of Sec.~\ref{sec:setting}. Let $x^\mu\in[0,1]^{N}$ denote the vectorized silhouette for object $\mu$.
+\begin{enumerate}
+    \item \textbf{Binarization.} Each pixel is thresholded at $0.5$:
+    \begin{equation}
+    \label{eq:struct_binarize}
+    \hat\xi_i^\mu \;=\;
+    \begin{cases}
+        +1 & \text{if } x_i^\mu \ge 0.5, \\
+        -1 & \text{otherwise,}
+    \end{cases}
+    \qquad i=1,\dots,N,\;\; \mu=1,\dots,K.
+    \end{equation}
+    At this stage the binary archetypes $\{\hat{\bm\xi}^\mu\}$ retain the spatial structure of the original silhouettes but exhibit non-trivial mutual overlaps $q_{\mu\nu}=N^{-1}\sum_i \hat\xi_i^\mu \hat\xi_i^\nu$.
+
+    \item \textbf{Linear decorrelation and re-binarization.}
+    To reduce the off-diagonal entries of the overlap matrix $\bm C=[q_{\mu\nu}]$, we apply an iterative orthogonal projection: each pattern is made orthogonal to all previously processed ones in the continuous domain, and the resulting real-valued vector is immediately re-binarized to $\{-1,+1\}^N$ via its componentwise sign. Formally, for $\mu=1,\dots,K$:
+    \begin{equation}
+    \label{eq:struct_decorr}
+    \bm v^\mu \;=\; \hat{\bm\xi}^\mu
+       \;-\;\sum_{\nu<\mu}
+       \frac{\langle\,{\bm\xi}^\nu,\,\hat{\bm\xi}^\mu\rangle}
+            {\langle\,{\bm\xi}^\nu,\,{\bm\xi}^\nu\rangle}\;{\bm\xi}^\nu,
+    \qquad
+    \bm\xi^\mu \;=\; \operatorname{sgn}(\bm v^\mu).
+    \end{equation}
+    Because the re-binarization is nonlinear, exact orthogonality is not achieved; however, the procedure substantially reduces inter-pattern correlations while preserving recognizable visual structure.
+\end{enumerate}
+
+Table~\ref{tab:struct_corr} reports the overlap matrix $C_{\mu\nu}=N^{-1}\langle\bm\xi^\mu,\bm\xi^\nu\rangle$ before and after decorrelation for the three selected silhouettes. The residual off-diagonal overlaps after preprocessing are small (typically $|C_{\mu\nu}|\lesssim 0.05$), confirming that the pipeline produces approximately orthogonal binary patterns.
+
+\begin{table}[h]
+\centering
+\caption{Overlap matrix $C_{\mu\nu}$ for the three selected Caltech-101 silhouettes before (raw) and after (decorrelated) the preprocessing of~\eqref{eq:struct_decorr}. Decorrelation markedly reduces inter-pattern overlap while keeping the diagonal entries at $1$.}
+\label{tab:struct_corr}
+\smallskip
+\begin{tabular}{lccc|ccc}
+\toprule
+ & \multicolumn{3}{c|}{Raw} & \multicolumn{3}{c}{Decorrelated} \\
+ & anchor & motorbike & bass & anchor & motorbike & bass \\
+\midrule
+anchor    & 1.000 & --    & --    & 1.000 & --    & --    \\
+motorbike & $-0.038$ & 1.000 & --    & $\approx 0$ & 1.000 & --    \\
+bass      & $0.092$ & $-0.048$ & 1.000 & $\approx 0$ & $\approx 0$ & 1.000 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+Once the decorrelated archetypes $\{\bm\xi^\mu\}_{\mu=1}^K$ are obtained, noisy examples are generated through the same channel used for random patterns~\eqref{eq:gen}: each observed sample $\bm\eta$ is produced by independently flipping each bit of a randomly chosen archetype with probability $(1-r)/2$ (see the left column in Fig. \ref{fig:structured_results}). The full federated pipeline of Subsec.~\ref{subsec:model-pipeline} is then executed: $L=3$ clients upload local Hebbian correlators at each round; the server aggregates, applies spectral sharpening and LAM-based factorization, and broadcasts reconstructed operators; clients fuse new local evidence with the broadcast operator via the convex combination rule~\eqref{eq:convex_comb} with fixed weight $w=0.6$.
+
+We run $T=12$ communication rounds for $10$ independent random seeds and measure reconstruction quality through the magnetization~\eqref{eq:mag}. To probe the effect of data quality, we consider two distinct noise regimes: a \emph{moderate}-quality setting with $r=0.6$ (each example has $\approx 20\%$ flipped bits) and a \emph{high}-quality setting with $r=0.8$ ($\approx 10\%$ flipped bits).
+
+
+Figure~\ref{fig:structured_results} presents the outcome for both noise levels side by side. Each panel displays, from left to right: representative noisy input examples, the evolution of per-archetype magnetizations $m_\mu(t)$ averaged over the $10$ seeds (shaded bands: $\pm 1\sigma$), and the final reconstructed patterns.
+
+In the high-quality regime ($r=0.8$, right panel) all three archetypes are recovered with high fidelity: magnetizations rise quickly above $0.9$ and remain stable throughout the $12$ rounds. The reconstructed images are visually recognizable as the original silhouettes with only minor pixel-level noise.
+
+In the moderate-quality regime ($r=0.6$, left panel) reconstruction is more challenging. The noisier examples reduce the signal-to-noise ratio of each local correlator, slowing convergence and increasing run-to-run variability, as reflected in the wider $\pm\sigma$ bands. Nevertheless, the pipeline still achieves non-trivial magnetizations, confirming that the federated aggregation and spectral sharpening stages provide sufficient denoising to recover structured patterns even when individual examples are substantially corrupted.
+
+\begin{figure}[t!]
+    \centering
+    \begin{minipage}[t]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/structured_panel_r06.png}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[t]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/structured_panel_r08.png}
+    \end{minipage}
+    \caption{{\color{red} da aggiungere l'asse y e rendere più carini, ingrandire caption e legende}Federated reconstruction of structured archetypes from Caltech-101 silhouettes.
+    \textit{Left panel:} moderate-quality examples ($r=0.6$).
+    \textit{Right panel:} high-quality examples ($r=0.8$).
+    In each panel, the leftmost column shows representative noisy inputs, the central plot tracks the per-archetype magnetization $m_\mu(t)$ (mean $\pm$ std over $10$ seeds; cf.~\eqref{eq:mag}), and the rightmost column displays the final reconstructed archetypes. Despite the spatial correlations inherent in natural silhouettes, the federated pipeline recovers all three patterns; higher example quality leads to faster convergence and tighter confidence bands.
+    Parameters: $N=784$, $L=3$, $K=3$, $T=12$, $M_{\mathrm{total}}=4000$, $w=0.6$.}
+    \label{fig:structured_results}
+\end{figure}
+
+These results confirm that the federated TAM pipeline is not restricted to idealized, uncorrelated binary patterns. The key enabler is the decorrelation step~\eqref{eq:struct_decorr}, which reduces inter-pattern overlap to a level where the spectral assumptions underlying the reconstruction (Sec.~\ref{subsec:bbp}) remain approximately satisfied. The comparison between $r=0.6$ and $r=0.8$ further illustrates the role of example quality: as predicted by the theoretical analysis, higher $r$ strengthens the signal spikes in the aggregated operator, leading to faster and more reliable archetype recovery.
+
+We note that this experiment primarily validates the pipeline on \emph{correlated} data with recognizable spatial structure; it does not address the full complexity of high-dimensional image distributions. Extending the framework to richer, multi-scale image representations remains an interesting direction for future investigation.
 
 \subsection{Cooperative learning}
 \label{subsec:cooperative-learning}
@@ -1272,73 +1399,8 @@ Initialize accepted set $\mathcal{Z} \leftarrow \emptyset$\;
 
 
 
-\newpage
-\section{Application to structured datasets}
-\label{app:structured}
 
-In the main text we validated the proposed pipeline on \emph{unstructured} random archetypes. Here we test the same procedure on two standard vision benchmarks, MNIST and Fashion-MNIST. In these datasets, however, the notion of an \emph{archetype} is not naturally defined in the sense of Sec.~\ref{sec:setting}: raw images are real-valued and exhibit strong intra-class and inter-class correlations. We therefore introduce a lightweight preprocessing step that converts a small set of classes into \emph{binary, approximately orthogonal} archetypes compatible with our theoretical framework.
 
-\paragraph{Datasets and challenges.}
-MNIST contains $70{,}000$ grayscale images of size $H\times W=28\times 28$ ($N=HW=784$ pixels), with pixel intensities in $\{0,\dots,255\}$. The main challenges are:
-\begin{enumerate}
-    \item \textbf{Archetype definition:} we must construct prototypical patterns that play the role of $\{\bm\xi^\mu\}$.
-    \item \textbf{Correlations:} image classes are structured and correlated (e.g., spatially localized strokes), violating the i.i.d.\ pattern assumptions used for random archetypes.
-    \item \textbf{Non-binary inputs:} pixels are real-valued rather than $\pm1$.
-\end{enumerate}
-
-\paragraph{Preprocessing: from class images to binary archetypes.}
-We focus on the first three classes and build $K=3$ archetypes as follows. Let $\mu\in\{0,1,2\}$ be a class label and let $\{x_m^\mu\}_{m=1}^{M^\mu}$ be a random subset of $M^\mu=2000$ images from that class, with
-\[
-x_m^\mu \in [0,255]^{H\times W}.
-\]
-We first normalize pixels to $[0,1]$ and compute the class prototype (pixel-wise empirical mean)
-\begin{equation}
-\label{eq:mnist_mean_prototype}
-\bar x^\mu
-\;=\;
-\frac{1}{M^\mu}\sum_{m=1}^{M^\mu}\frac{x_m^\mu}{255}
-\;\in\;[0,1]^{H\times W}.
-\end{equation}
-We then map prototypes to $[-1,1]$ through an affine transform,
-\begin{equation}
-\label{eq:mnist_affine}
-\tilde x^\mu \;=\; 2\bar x^\mu - 1,
-\end{equation}
-and reshape each $\tilde x^\mu$ into a vector in $\mathbb{R}^N$ with $N=HW$. To reduce inter-class correlations, we apply Gram--Schmidt orthogonalization to $\{\tilde x^0,\tilde x^1,\tilde x^2\}$, obtaining orthonormal vectors
-$\tilde{\bm\xi}^0,\tilde{\bm\xi}^1,\tilde{\bm\xi}^2\in\mathbb{R}^N$.
-Finally, we binarize componentwise,
-\begin{equation}
-\label{eq:mnist_binarize}
-\bm\xi^\mu \;=\; \operatorname{sgn}\!\big(\tilde{\bm\xi}^\mu\big)\in\{-1,+1\}^N,
-\qquad \mu=0,1,2,
-\end{equation}
-thereby defining the target archetypes used in the rest of this appendix. The same preprocessing is applied to Fashion-MNIST.
-
-\paragraph{Federated generation and reconstruction.}
-Once the archetypes $\{\bm\xi^\mu\}_{\mu=1}^K$ are defined, we generate noisy examples exactly as in~\eqref{eq:gen}, and we run the federated pipeline of Subsec.~\ref{subsec:model-pipeline}. In particular, reconstruction quality is measured through the magnetization/overlap defined in~\eqref{eq:mag}. We test two noise regimes corresponding to $10\%$ and $20\%$ pixel flips (equivalently $r\simeq 0.9$ and $r\simeq 0.8$ in~\eqref{eq:gen}); in both cases, the $K=3$ archetypes can be successfully recovered.
-
-\begin{figure}[t!]
-    \centering
-    \includegraphics[width=1\linewidth]{figures/panelA-structured.png}
-    \caption{\textbf{Preprocessing pipeline for structured datasets.}
-    From raw class images (MNIST, top; Fashion-MNIST, bottom) we build binary archetypes compatible with Sec.~\ref{sec:setting} by:
-    (i) sampling class examples; (ii) computing class prototypes via pixel-wise averaging~\eqref{eq:mnist_mean_prototype};
-    (iii) orthogonalizing the continuous prototypes with Gram--Schmidt to reduce inter-class correlations; and
-    (iv) binarizing the resulting vectors via~\eqref{eq:mnist_binarize} to obtain $\bm\xi^\mu\in\{-1,+1\}^N$.}
-    \label{fig:structured-pipeline}
-\end{figure}
-
-\begin{figure}[t!]
-    \centering
-    \includegraphics[width=1\linewidth]{figures/panelB-structured.png}
-    \caption{\textbf{Retrieval on MNIST and Fashion-MNIST archetypes.}
-    Top row: MNIST; bottom row: Fashion-MNIST. Archetypes are constructed via the preprocessing in Fig.~\ref{fig:structured-pipeline}.
-    We consider two corruption regimes in the example channel~\eqref{eq:gen}: $r=0.9$ (left) and $r=0.8$ (right), corresponding to $10\%$ and $20\%$ expected pixel flips, respectively.
-    Within each panel we show: (i) a representative noisy input example (left); (ii) the evolution of overlaps $m_\mu$ with the target archetypes (center; cf.~\eqref{eq:mag}); and (iii) the final retrieved pattern (right).
-    In both datasets and both noise regimes the dynamics denoises the input and converges to the correct archetype, as indicated by overlaps rapidly approaching $1$.
-    Parameters: $N=784$, $L=3$, $T=12$, $M_c^t=400$ (constant), fixed $w_c(t)\equiv 0.6$, and LAM dynamics run for 800 Monte Carlo steps per round.}
-    \label{fig:snr_regimes}
-\end{figure}
 
 
 
@@ -1419,7 +1481,7 @@ is robust when the form of the noise is uncertain.
 \noindent
 \emph{Marchenko--Pastur (MP) edge.} We estimate the bulk variance $\sigma_n^2$
 from the lower part of the spectrum of $J^{(t)}_\mathrm{KS}$ and the aspect
-ratio $q:=N/M_{\mathrm{eff}}$. We then use the upper MP edge
+ratio $q:=N/M_{\mathrm{round}}$. We then use the upper MP edge
 \begin{equation}\label{eq:mp-edge}
 \lambda_+\;=\;\sigma_n^2\big(1+\sqrt{q}\big)^2,
 \end{equation}
@@ -2039,7 +2101,7 @@ Finally, we observe that the error term $O(\sqrt{\log N/N})$ is largely dictated
 
 
 \begin{lemma}[Uniform quantitative decoupling]\label{lem:decoupling}
-Let $Z\in\mathbb{R}^{N\times M_{\mathrm{eff}}}$ satisfy the standing
+Let $Z\in\mathbb{R}^{N\times M_{\mathrm{round}}}$ satisfy the standing
 assumptions under which the isotropic local law
 Theorem~\ref{thm:mp-global-law} holds, with sample covariance
 $S_0$ and resolvent $G(z)=(S_0-zI_N)^{-1}$.
@@ -2303,7 +2365,7 @@ Bai--Silverstein~\cite[Chs.~3 and~5]{BaiSilverstein2010}
 and Knowles--Yin~\cite[Thms.~3.6 and~3.12]{KnowlesYin2017} for the sample--covariance case).
 Since $K$ is fixed, the effective aspect ratio is
 \[
-q_W := \frac{N-K}{M_{\mathrm{eff}}} = q+O\Big(\frac{1}{N}\Big),
+q_W := \frac{N-K}{M_{\mathrm{round}}} = q+O\Big(\frac{1}{N}\Big),
 \]
 and the eigenvalues of $S_W$ are, with probability at least $1-\delta$,
 contained in an interval of the form

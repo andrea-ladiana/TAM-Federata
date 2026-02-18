@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--T", type=int, default=10, help="Number of rounds")
     p.add_argument("--M-per", type=int, default=800, help="Examples per client per round")
     p.add_argument("--r-good", type=float, default=0.90, help="Signal quality for good clients")
-    p.add_argument("--r-bad", type=float, default=0.0, help="Signal quality for attacker (0 = pure noise)")
+    p.add_argument("--r-bad", type=float, default=0.1, help="Signal quality for attacker (0 = pure noise)")
     p.add_argument("--alpha-ema", type=float, default=0.5, help="EMA coefficient for w smoothing")
     p.add_argument("--prop-iters", type=int, default=30, help="Propagation iterations")
     p.add_argument("--seed", type=int, default=42, help="Random seed")

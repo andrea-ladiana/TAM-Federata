@@ -128,7 +128,7 @@ def plot_panel(
     ax_w.plot(t, w_good_mean, color=COLOR_GOOD_MEAN, lw=2.5,
               label=r"Good clients ($r=0.8$, mean)")
     ax_w.plot(t, w_att, color=COLOR_ATTACKER, lw=2.5, ls="--",
-              label=r"Attacker ($r=0$)")
+              label=r"Attacker ($r\simeq0$)")
     _dress_w_axis(ax_w, T, w_good_mean)
 
     # ── Panel B ──
@@ -207,7 +207,7 @@ def plot_panel_multiseed(
     ax_w.plot(
         t, ms.w_att_mean,
         color=COLOR_ATTACKER, lw=2.5, ls="--",
-        label=r"Attacker ($r=0$)",
+        label=r"Attacker ($r\simeq0$)",
     )
 
     _dress_w_axis(ax_w, T, ms.w_good_mean)

@@ -5,10 +5,10 @@
   "T": 10,
   "M_per": 800,
   "r_good": 0.9,
-  "r_bad": 0.0,
+  "r_bad": 0.1,
   "attacker_idx": 4,
   "alpha_ema": 0.5,
   "prop_iters": 30,
-  "seed_base": 42,
-  "n_seeds": 20
+  "seed": 42,
+  "n_seeds": 1
 }
